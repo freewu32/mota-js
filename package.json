@@ -1,0 +1,28 @@
+{
+    "name": "mota-js",
+    "version": "3.0.0-dev",
+    "private": true,
+    "description": "HTML5 魔塔引擎与可视化编辑器",
+    "scripts": {
+        "dev": "bun --hot server/index.ts",
+        "start": "bun server/index.ts",
+        "build": "bun run scripts/build.ts",
+        "migrate": "bun run scripts/migrate.ts",
+        "test": "bun test",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint --no-error-on-unmatched-pattern src server scripts tests",
+        "format": "prettier --write ."
+    },
+    "dependencies": {
+        "zod": "^4.0.0"
+    },
+    "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "@types/bun": "latest",
+        "eslint": "^10.11.0",
+        "prettier": "^3.0.0",
+        "typescript": "^5.9.3",
+        "typescript-eslint": "^8.0.0"
+    },
+    "packageManager": "pnpm@11.7.0"
+}

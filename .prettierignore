@@ -1,2 +1,31 @@
-*.js
-*
+node_modules
+dist
+
+# 旧代码（绞杀者模式下逐步移除）
+libs
+_server
+project
+extensions
+runtime.d.ts
+runtime.min.d.ts
+
+# 文档与素材
+_docs
+_codelab
+docs
+常用工具
+README.md
+AGENTS.md
+LICENSE.md
+
+# 旧入口（阶段 6 前不格式化，避免无意义改动）
+main.js
+server.js
+index.html
+editor.html
+editor-mobile.html
+styles.css
+
+# 生成物
+*.min.js
+*.min.ts
