@@ -182,12 +182,15 @@ describe('tileAt', () => {
         expect(tileAt(canvas, 200, 50)).toBeNull();
     });
 
-    test('画布被 CSS 缩放时按比例换算', () => {
+    test('画布被 CSS 缩放时按缩放后的格子尺寸换算', () => {
         const scaled = {
             width: 96,
             height: 96,
             getBoundingClientRect: () => ({ left: 0, top: 0, width: 48, height: 48 }),
         } as unknown as HTMLCanvasElement;
-        expect(tileAt(scaled, 24, 24)).toEqual({ x: 1, y: 1 });
+        // 显示倍率 0.5 -> 显示格子边长 16
+        expect(tileAt(scaled, 24, 24, 16)).toEqual({ x: 1, y: 1 });
+        expect(tileAt(scaled, 47, 47, 16)).toEqual({ x: 2, y: 2 });
+        expect(tileAt(scaled, 48, 24, 16)).toBeNull();
     });
 });

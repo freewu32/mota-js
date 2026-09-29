@@ -1,80 +1,289 @@
 /*
- * 游戏页面的布局：状态栏 + 工具栏 + 地图舞台（#game / #fx 叠放）+ 对话层。
- * 组件本身的样式在 `src/ui/styles.css`（游戏端与编辑器共用）。
+ * 游戏页面的布局。
+ *
+ * 排版数字来自 `src/game/layout.ts`（旧 `libs/control.js` 的 `resize`），
+ * 通过 CSS 变量下沉到这里；组件本身的样式在 `src/ui/styles.css`。
+ *
+ * 两种排面（与旧版一致）：
+ * - 横屏：左列是状态栏，左列下 1/4 是工具栏，右边是地图；
+ * - 竖屏：顶部状态栏（每行 3 项）→ 地图 → 工具栏一行。
  */
 
 html,
 body {
     margin: 0;
     height: 100%;
-    background: var(--mota-bg);
+    overflow: hidden;
+    background: #000;
     color: var(--mota-text);
     font-family: var(--mota-font);
 }
 
 #app {
-    min-height: 100%;
+    height: 100%;
 }
 
 .mota-app {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px 16px;
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    font-size: var(--mota-font-size, 16px);
+    line-height: 1.2;
+    background: #000;
+    /* 状态栏/工具栏图标尺寸（跟状态栏字号联动，旧版图标是 32px 图缩放而来） */
+    --mota-status-icon-size: calc(var(--mota-status-font, 14px) * 1.5);
 }
 
-.mota-header {
-    width: 100%;
-    max-width: 640px;
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    font-size: 14px;
+/* ---------- 网格：两个方向 ---------- */
+
+.mota-app[data-vertical='true'] {
+    grid-template-areas: 'status' 'stage' 'toolbar' 'pad';
+    grid-template-columns: var(--mota-outer-w);
+    grid-template-rows: var(--mota-status-h) var(--mota-outer-h) var(--mota-toolbar-h) auto;
 }
 
-.mota-title {
-    font-size: 16px;
+.mota-app[data-vertical='false'] {
+    grid-template-areas: 'status stage' 'toolbar stage';
+    grid-template-columns: calc(var(--mota-bar-w) + var(--mota-border)) var(--mota-outer-w);
+    grid-template-rows: calc(var(--mota-outer-h) * 0.75) calc(var(--mota-outer-h) * 0.25);
+}
+
+.mota-app[data-vertical='false'][data-toolbar-extend='true'] {
+    grid-template-areas: 'status stage' 'toolbar toolbar';
+    grid-template-rows: var(--mota-outer-h) var(--mota-toolbar-h);
+}
+
+/* `flags.hideLeftStatusBar`：横屏不显示左列，工具栏改到地图下方 */
+.mota-app[data-vertical='false'][data-hide-status='true'] {
+    grid-template-areas: 'stage' 'toolbar';
+    grid-template-columns: var(--mota-outer-w);
+    grid-template-rows: var(--mota-outer-h) var(--mota-toolbar-h);
+}
+
+.mota-app[data-vertical='false'][data-hide-status='true'] .mota-status {
+    display: none;
+}
+
+/* ---------- 状态栏 ---------- */
+
+.mota-app .mota-status {
+    grid-area: status;
+    box-sizing: border-box;
+    overflow: hidden;
+    padding: calc(var(--mota-border) / 2);
+    background: var(--mota-status-bg, #000);
+    border: var(--mota-border) solid var(--mota-border-color, #000);
+}
+
+.mota-app[data-vertical='false'] .mota-status {
+    width: calc(var(--mota-bar-w) + var(--mota-border));
+    height: var(--mota-outer-h);
+    border-right: none;
+}
+
+.mota-app .mota-status-slots {
+    display: grid;
+    font-size: var(--mota-status-font, 14px);
     font-weight: 700;
-    color: var(--mota-title);
+    font-style: italic;
+    color: var(--mota-status-color, #fff);
 }
 
-.mota-status,
-.mota-toolbar,
-.mota-stage {
-    width: 100%;
-    max-width: 640px;
+.mota-app[data-vertical='false'] .mota-status-slots {
+    grid-template-columns: 1fr;
+    grid-auto-rows: var(--mota-status-item-h);
 }
+
+.mota-app[data-vertical='true'] .mota-status-slots {
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: var(--mota-status-item-h);
+}
+
+.mota-app .mota-status-slot {
+    display: flex;
+    align-items: center;
+    gap: 0.25em;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.mota-status-slot.is-clickable {
+    cursor: pointer;
+}
+
+.mota-app .mota-status-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mota-status-key,
+.mota-status-pzf {
+    font-style: normal;
+}
+
+/* 钥匙 / 破炸飞 / 状态：旧版是彩色纯文字（颜色见 `StatusBar.tsx`） */
+.mota-status-key .mota-status-value,
+.mota-status-pzf .mota-status-value {
+    font-style: normal;
+    letter-spacing: 0.02em;
+}
+
+/* 图标（`project/materials/icons.png`，单列 32px）；图集加载后隐藏文字标签 */
+.mota-app .mota-status-icon {
+    flex: none;
+    width: var(--mota-status-icon-size, 1.4em);
+    height: var(--mota-status-icon-size, 1.4em);
+    background-image: var(--mota-status-sheet, none);
+    background-repeat: no-repeat;
+    background-size: 100% auto;
+    image-rendering: pixelated;
+    display: none;
+}
+
+html[data-status-icons='true'] .mota-status-icon {
+    display: block;
+}
+
+html[data-status-icons='true'] .mota-status-label {
+    display: none;
+}
+
+/* ---------- 工具栏 ---------- */
 
 .mota-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+    grid-area: toolbar;
+    box-sizing: border-box;
+    overflow: hidden;
+    padding: calc(var(--mota-border) / 2);
+    background: var(--mota-tools-bg, transparent);
+    border: var(--mota-border) solid var(--mota-border-color, #000);
 }
 
-.mota-stage {
-    position: relative;
+.mota-app[data-vertical='false'] .mota-toolbar {
+    width: calc(var(--mota-bar-w) + var(--mota-border));
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    align-content: start;
+    border-top: none;
+    border-right: none;
+}
+
+.mota-app[data-vertical='true'] .mota-toolbar {
     display: flex;
+    justify-content: space-evenly;
+    align-items: center;
+}
+
+.mota-app[data-vertical='false'][data-toolbar-extend='true'] .mota-toolbar,
+.mota-app[data-vertical='false'][data-hide-status='true'] .mota-toolbar {
+    width: var(--mota-outer-w);
+    display: flex;
+    justify-content: space-evenly;
+    border-top: var(--mota-border) solid var(--mota-border-color, #000);
+}
+
+.mota-hard {
+    color: var(--mota-hard-color, #f00);
+    font-family: 'Arial Black', Arial, sans-serif;
+    font-size: calc(var(--mota-tool-height) * 0.7);
+    font-weight: 700;
+    white-space: nowrap;
+    grid-column: 1 / -1;
+    text-align: center;
+}
+
+.mota-tool-button {
+    display: flex;
+    align-items: center;
     justify-content: center;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--mota-text);
+    cursor: pointer;
+}
+
+.mota-tool-button:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.mota-tool-icon {
+    width: var(--mota-tool-height);
+    height: var(--mota-tool-height);
+    background-image: var(--mota-status-sheet, none);
+    background-repeat: no-repeat;
+    background-size: 100% auto;
+    image-rendering: pixelated;
+}
+
+html[data-status-icons='true'] .mota-tool-label {
+    display: none;
+}
+
+.mota-tool-label {
+    font-size: calc(var(--mota-tool-height) * 0.42);
+    white-space: nowrap;
+}
+
+/* ---------- 地图舞台 ---------- */
+
+.mota-stage {
+    grid-area: stage;
+    position: relative;
+    box-sizing: border-box;
+    width: var(--mota-outer-w);
+    height: var(--mota-outer-h);
+    border: var(--mota-border) solid var(--mota-border-color, #000);
+    background: #000;
+    overflow: hidden;
     touch-action: none;
 }
 
-.mota-map {
-    display: block;
+.mota-map,
+.mota-fx {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: var(--mota-map-w);
+    height: var(--mota-map-h);
     image-rendering: pixelated;
-    background: #000;
-    max-width: 100%;
-    height: auto;
 }
 
 .mota-fx {
-    position: absolute;
-    left: 50%;
-    top: 0;
-    transform: translateX(-50%);
+    z-index: 2;
     pointer-events: none;
-    image-rendering: pixelated;
-    max-width: 100%;
+}
+
+/** 地图舞台内的对话框 / 提示：旧版把文本画在地图中央 */
+.mota-stage .mota-dialog-layer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    transform: none;
+    width: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    z-index: 3;
+}
+
+.mota-stage .mota-dialog {
+    width: min(100%, 400px);
+    max-height: 100%;
+    overflow: auto;
+}
+
+.mota-stage .mota-dialog-hint {
+    text-align: center;
+    letter-spacing: 0.2em;
 }
 
 /* ---------- 开始界面 ---------- */
@@ -83,59 +292,154 @@ body {
     position: fixed;
     inset: 0;
     z-index: 40;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgb(0 0 0 / 70%);
-    backdrop-filter: blur(2px);
+    overflow: hidden;
+    background: #fff;
 }
 
-.mota-start-box {
-    min-width: min(420px, 90vw);
+.mota-start-background {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    height: 100%;
+    width: auto;
+    transform: translate(-50%, -50%);
+    z-index: 1;
+}
+
+.mota-start-logo {
+    position: absolute;
+    left: 0;
+    right: 0;
+    margin: 8% auto 0;
+    text-align: center;
+    font-size: 3em;
+    font-weight: 700;
+    z-index: 2;
+    user-select: none;
+}
+
+.mota-start-buttons {
+    position: absolute;
+    bottom: 5%;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3;
+    font-size: 1.4em;
+    text-align: center;
+    /* 旧 `#startButtonGroup` 的默认外观（塔作者的 startButtonsStyle 会整段覆盖） */
+    padding: 15px 25px;
+    min-width: 20%;
+    background-color: #32369f;
+    opacity: 0.85;
+    color: #fff;
+    border: #fff 2px solid;
+    border-radius: 10px;
+}
+
+.mota-start-button {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 4px 0;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    font: inherit;
+    font-weight: 700;
+    color: inherit;
+    background: none;
+    cursor: pointer;
+}
+
+.mota-start-button.is-selected {
+    border-color: currentcolor;
+}
+
+.mota-start-hint {
+    margin-top: 0.5em;
+    font-size: 0.7em;
+    opacity: 0.8;
+}
+
+/* ---------- 换层过场 ---------- */
+
+.mota-floor-curtain {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 4;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
-    padding: 28px 32px;
-    background: var(--mota-panel);
-    border: 2px solid var(--mota-panel-border);
-    border-radius: 10px;
-    box-shadow: 0 12px 40px rgb(0 0 0 / 60%);
-}
-
-.mota-start-title {
-    margin: 0;
-    font-size: 24px;
-    color: var(--mota-title);
-}
-
-.mota-start-version {
-    color: var(--mota-muted);
-    font-size: 12px;
-}
-
-.mota-start-levels,
-.mota-start-buttons {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
     justify-content: center;
+    gap: 0.4em;
+    text-align: center;
+    pointer-events: none;
+    background: var(--mota-floor-curtain-bg, #000);
+    color: var(--mota-floor-curtain-color, #fff);
+    transition: opacity 90ms linear;
 }
 
-.mota-button.is-selected {
+.mota-floor-curtain[data-phase='out'] {
+    opacity: 0;
+}
+
+.mota-floor-curtain-title {
+    font-size: 3em;
+    font-weight: 700;
+}
+
+.mota-floor-curtain-version {
+    font-size: 1.2em;
+    font-weight: 700;
+}
+
+.mota-floor-curtain-floor {
+    margin-top: 1em;
+    font-size: 1.6em;
+    font-weight: 700;
+}
+
+/* ---------- 移动端虚拟键盘 ---------- */
+
+.mota-pad {
+    grid-area: pad;
+    display: grid;
+    grid-template-columns: repeat(3, 3.4em);
+    grid-template-rows: repeat(3, 3.4em);
+    gap: 0.2em;
+    justify-content: center;
+    margin-top: 0.2em;
+    touch-action: none;
+}
+
+.mota-pad-button {
+    font: inherit;
+    font-size: 1em;
+    color: var(--mota-text);
+    background: #22252c;
+    border: 1px solid var(--mota-panel-border);
+    border-radius: 6px;
+    user-select: none;
+}
+
+.mota-pad-button:active {
     border-color: var(--mota-highlight);
-    color: var(--mota-highlight);
 }
 
-/* ---------- 移动端 ---------- */
-
-@media (max-width: 719px), (pointer: coarse) {
-    .mota-toolbar .mota-button {
-        padding: 6px 10px;
-        font-size: 13px;
-    }
-
-    .mota-dialog-layer {
-        bottom: 12px;
-    }
+.mota-pad-up {
+    grid-area: 1 / 2;
+}
+.mota-pad-left {
+    grid-area: 2 / 1;
+}
+.mota-pad-ok {
+    grid-area: 2 / 2;
+}
+.mota-pad-right {
+    grid-area: 2 / 3;
+}
+.mota-pad-down {
+    grid-area: 3 / 2;
 }

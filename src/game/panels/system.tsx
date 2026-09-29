@@ -1,6 +1,15 @@
 import { STATUS_BAR_LABELS, type StatusBarSlot } from '../../engine/modules/ui';
 import { $theme, Panel } from '../../ui';
 import type { GameContext } from '../context';
+import { AVAILABLE_SCALES } from '../layout';
+import {
+    $displayCritical,
+    $displayEnemyDamage,
+    $scaleOverride,
+    setDisplayCritical,
+    setDisplayEnemyDamage,
+    setScaleOverride,
+} from '../settings';
 import type { GamePanelProps } from './shared';
 
 /** 存读档 */
@@ -19,10 +28,12 @@ export function SaveLoadPanel({ ctx, close }: GamePanelProps) {
     );
 }
 
-/** 设置：音效 / 音乐 / 音量 / 窗口皮肤 */
+/** 设置：旧 `_drawSwitchs` 的音效 / 显示子菜单（存在 localStorage，不进存档） */
 export function SettingsPanel({ ctx, close }: GamePanelProps) {
     const theme = $theme.value;
     const skinOn = Boolean(theme.skin);
+    const scale = $scaleOverride.value;
+    const steps = AVAILABLE_SCALES;
     return (
         <Panel title="设置" onClose={close}>
             <div class="mota-toolbar">
@@ -68,6 +79,65 @@ export function SettingsPanel({ ctx, close }: GamePanelProps) {
                         ctx.audio.setVolume(value);
                     }}
                 />
+            </div>
+            <div class="mota-toolbar">
+                <span class="mota-muted">显示</span>
+                <button
+                    type="button"
+                    class="mota-button"
+                    onClick={() => {
+                        setDisplayEnemyDamage(!$displayEnemyDamage.value);
+                        ctx.refresh();
+                    }}
+                >
+                    怪物显伤：{$displayEnemyDamage.value ? '[ON]' : '[OFF]'}
+                </button>
+                <button
+                    type="button"
+                    class="mota-button"
+                    onClick={() => {
+                        setDisplayCritical(!$displayCritical.value);
+                        ctx.refresh();
+                    }}
+                >
+                    临界显伤：{$displayCritical.value ? '[ON]' : '[OFF]'}
+                </button>
+            </div>
+            <div class="mota-toolbar">
+                <span class="mota-muted">放缩</span>
+                <button
+                    type="button"
+                    class="mota-button"
+                    onClick={() => {
+                        const index = steps.indexOf(scale ?? 1);
+                        setScaleOverride(steps[Math.max(0, index - 1)] ?? 1);
+                        ctx.refresh();
+                    }}
+                >
+                    &lt;
+                </button>
+                <span class="mota-line">{scale == null ? '自动' : `${scale}x`}</span>
+                <button
+                    type="button"
+                    class="mota-button"
+                    onClick={() => {
+                        const index = steps.indexOf(scale ?? 1);
+                        setScaleOverride(steps[Math.min(steps.length - 1, index + 1)] ?? 1);
+                        ctx.refresh();
+                    }}
+                >
+                    &gt;
+                </button>
+                <button
+                    type="button"
+                    class="mota-button"
+                    onClick={() => {
+                        setScaleOverride(null);
+                        ctx.refresh();
+                    }}
+                >
+                    自动
+                </button>
             </div>
         </Panel>
     );

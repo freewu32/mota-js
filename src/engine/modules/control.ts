@@ -11,6 +11,7 @@ import {
     getDamageString,
     getEnemyInfo,
     hasSpecial,
+    nextCriticals,
     type BattleContext,
     type EnemyData,
 } from './enemys';
@@ -398,6 +399,20 @@ export class MotaControl {
         const enemy = this.ctx.enemys[block.event.id];
         if (!enemy) return null;
         return getDamageString(enemy, x, y, this.battleContext());
+    }
+
+    /**
+     * 该格的下一个临界值（旧显伤里的 `displayCritical`）：
+     * 还差多少攻击力才能少挨一轮 / 破防，取不到返回 null。
+     */
+    criticalValue(x: number, y: number): number | null {
+        const block = this.blockAt(x, y);
+        if (!block || !isEnemy(block.event)) return null;
+        const enemy = this.ctx.enemys[block.event.id];
+        if (!enemy) return null;
+        const list = nextCriticals(enemy, 1, x, y, this.battleContext());
+        const first = list[0]?.[0];
+        return first == null ? null : first;
     }
 
     private disableBlock(block: Block): void {

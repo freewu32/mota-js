@@ -36,9 +36,13 @@ import { AutoRoute, tileAt } from './autopath';
 import { loadImage } from './assets';
 import { AudioPlayer } from './audio';
 import type { GameContext } from './context';
-import { FxLayer } from './fx';
+import { showFloorCurtain } from './curtain';
+import { FxLayer, type OverlayDamage } from './fx';
 import { createIconResolver } from './icons';
+import { computeGameLayout, viewportSize, type GameLayout } from './layout';
 import { buildWindowSkinDataUrl, resolveThemeSkin } from './skin';
+import { $layout } from './store';
+import { $displayCritical, $displayEnemyDamage, $scaleOverride } from './settings';
 
 ////// 数据与素材 //////
 
@@ -103,7 +107,22 @@ let gameCtx: CanvasRenderingContext2D | null = null;
 let animate = 0;
 /** 最近一次成功移动的时间（决定勇士用走路的哪一帧） */
 let movedAt = 0;
+/** 当前排版参数（旧 `core.domStyle.scale` / `isVertical` 等） */
+let layout: GameLayout = computeGameLayout({
+    clientWidth: viewportSizeFallback().width,
+    clientHeight: viewportSizeFallback().height,
+    mapWidth: TILE * 13,
+    mapHeight: TILE * 13,
+    statusRows: 1,
+    statusCount: 1,
+});
 const animateClock = new AnimateClock(120);
+
+/** 高清画布倍率（旧 `core.domStyle.ratio = max(devicePixelRatio, scale)`） */
+function pixelRatio(): number {
+    const dpr = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+    return Math.max(dpr, 1);
+}
 
 // 勇士精灵：`firstData.hero.image` 指向 project/images 下的图（旧 `material.images.hero`）
 const heroImage = await loadImage(
@@ -143,12 +162,17 @@ function render(): void {
     if (!gameCanvas || !gameCtx) return;
     const width = (runtime.floor.map[0]?.length ?? 13) * TILE;
     const height = runtime.floor.map.length * TILE;
-    if (gameCanvas.width !== width || gameCanvas.height !== height) {
-        gameCanvas.width = width;
-        gameCanvas.height = height;
-        gameCtx.imageSmoothingEnabled = false;
+    // 背板按「高清倍率」放大，变换设成倍率 -> 之后都按地图像素绘制（旧 `_setHDCanvasSize`）
+    const ratio = pixelRatio();
+    const backingWidth = Math.max(1, Math.round(width * ratio));
+    const backingHeight = Math.max(1, Math.round(height * ratio));
+    if (gameCanvas.width !== backingWidth || gameCanvas.height !== backingHeight) {
+        gameCanvas.width = backingWidth;
+        gameCanvas.height = backingHeight;
     }
-    fx.resize(width, height);
+    gameCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    gameCtx.imageSmoothingEnabled = false;
+    fx.resize(width, height, ratio);
     const override = fx.heroOverride;
     const hero = override ? { x: override.x, y: override.y } : runtime.state.hero;
     drawScene(gameCtx, runtime.floor, data.maps, hero, materials, animate, heroImage == null);
@@ -167,10 +191,155 @@ function render(): void {
             performance.now() - movedAt < 220,
         );
     }
+    renderDamage();
+}
+
+/**
+ * 地图显伤（旧 `control.updateDamage` / `drawDamage`）。
+ *
+ * 旧版需要持有怪物手册（`book`）才显示。算一层显伤要扫一遍光环 / 支援，很贵，
+ * 所以先用一个廉价指纹（楼层 / 勇士关键属性 / 位置 / 图块数 / flag 数）挡住
+ * 主循环的每帧调用，指纹变了才重算。
+ */
+let damageKey = '';
+
+function renderDamage(): void {
+    if (!runtime.items.has('book') || !$displayEnemyDamage.value) {
+        if (damageKey !== '') {
+            damageKey = '';
+            fx.setDamageOverlay(null);
+        }
+        return;
+    }
+    const hero = runtime.state.hero;
+    const key = [
+        runtime.state.floorId,
+        hero.x,
+        hero.y,
+        hero.atk,
+        hero.def,
+        hero.mdef,
+        hero.hp,
+        runtime.getBlocks(runtime.state.floorId).length,
+        Object.keys(runtime.state.flags).length,
+        $displayCritical.value ? 'c' : '-',
+    ].join(':');
+    if (key === damageKey) return;
+    damageKey = key;
+
+    const list: OverlayDamage[] = [];
+    for (const enemy of runtime.listEnemies()) {
+        list.push({ x: enemy.x, y: enemy.y, text: enemy.damage, color: enemy.color });
+        if (!$displayCritical.value) continue;
+        const critical = runtime.criticalAt(enemy.x, enemy.y);
+        if (critical == null) continue;
+        // 临界值画在伤害上方（旧版 `py = 32*(y+1)-11`）
+        list.push({ x: enemy.x, y: enemy.y, text: critical, color: '#FFFFFF', dy: 10 });
+    }
+    fx.setDamageOverlay(list);
 }
 
 function renderStatus(): void {
     setStatus(runtime.statusBarView());
+}
+
+////// 排版（旧 `control.resize`）与塔作者外观 //////
+
+/** 当前楼层地图的逻辑尺寸 */
+function mapSize(): { width: number; height: number } {
+    return {
+        width: (runtime.floor.map[0]?.length ?? 13) * TILE,
+        height: runtime.floor.map.length * TILE,
+    };
+}
+
+/** 排版参数是否没变（避免每回合都写 signal 触发重渲染） */
+function sameLayout(a: GameLayout, b: GameLayout): boolean {
+    return (
+        a.vertical === b.vertical &&
+        a.scale === b.scale &&
+        a.outerWidth === b.outerWidth &&
+        a.outerHeight === b.outerHeight &&
+        a.barWidth === b.barWidth &&
+        a.statusBarHeight === b.statusBarHeight &&
+        a.toolbarHeight === b.toolbarHeight &&
+        a.statusItemHeight === b.statusItemHeight &&
+        a.statusFontSize === b.statusFontSize &&
+        a.toolbarItemHeight === b.toolbarItemHeight &&
+        a.extendToolbar === b.extendToolbar
+    );
+}
+
+/** 旧 `control.resize`：算出排版参数，写进 `$layout`（CSS 变量在 `app.tsx` 里下发） */
+function updateLayout(): void {
+    const { width, height } = viewportSize();
+    const map = mapSize();
+    const status = runtime.statusBarView();
+    const count = status.visibility.slots.length +
+        (status.visibility.keys ? 1 : 0) +
+        (status.visibility.pzf ? 1 : 0) +
+        (status.visibility.debuff ? 1 : 0);
+    const next = computeGameLayout({
+        clientWidth: width,
+        clientHeight: height,
+        mapWidth: map.width,
+        mapHeight: map.height,
+        statusRows: Math.max(1, Math.ceil(count / 3)),
+        statusCount: Math.max(1, count),
+        // 旧 `core.domStyle.scale`：玩家手动选过档位就用它（放缩设置）
+        scale: $scaleOverride.value ?? layout.scale,
+        extendToolbar: data.tower.flags.extendToolbar === true,
+        hideLeftStatusBar: data.tower.flags.hideLeftStatusBar === true,
+    });
+    const changed = !sameLayout(layout, next);
+    layout = next;
+    applyGameStyles();
+    if (changed) $layout.value = layout;
+    // 显伤要跟着换层 / 放缩重算
+    damageKey = '';
+    renderDamage();
+}
+
+/** 单次排版尺寸（在拿到真实楼层之前先用 13x13） */
+function viewportSizeFallback(): { width: number; height: number } {
+    return typeof document === 'undefined' ? { width: 0, height: 0 } : viewportSize();
+}
+
+function rgba(color: unknown, fallback = 'transparent'): string {
+    if (typeof color === 'string') return color;
+    if (Array.isArray(color) && color.length >= 3) {
+        const [r, g, b, a] = color.map((one) => Number(one) || 0);
+        return `rgba(${r},${g},${b},${a == null ? 1 : a})`;
+    }
+    return fallback;
+}
+
+/**
+ * 把 `main.styles` 里的 `url(project/...)` 改成站内绝对路径。
+ *
+ * 旧版的样式表在仓库根目录，`project/materials/ground.png` 能直接解析；
+ * 3.0 的样式表被打包到 `/_bun/asset/*.css`，相对路径会解析错，所以得转成 `/project/...`。
+ */
+function rewriteStyleUrls(value: string): string {
+    return value.replace(/url\((\s*['"]?)project\//g, 'url($1/project/');
+}
+
+/** 把 `main.styles` 里的外观下沉为 CSS 变量（旧 `globalAttribute`） */
+function applyGameStyles(): void {
+    if (typeof document === 'undefined') return;
+    const styles = (data.tower.main.styles ?? {}) as Record<string, unknown>;
+    const root = document.documentElement.style;
+    const vertical = layout.vertical;
+    const statusBackground = vertical
+        ? (styles.statusTopBackground ?? styles.statusLeftBackground)
+        : (styles.statusLeftBackground ?? styles.statusTopBackground);
+    root.setProperty('--mota-status-bg', typeof statusBackground === 'string' ? rewriteStyleUrls(statusBackground) : '#000');
+    root.setProperty('--mota-tools-bg', typeof styles.toolsBackground === 'string' ? rewriteStyleUrls(styles.toolsBackground) : 'transparent');
+    root.setProperty('--mota-border-color', rgba(styles.borderColor, '#000'));
+    root.setProperty('--mota-status-color', rgba(styles.statusBarColor, '#fff'));
+    // 换层黑幕（旧 `globalAttribute.floorChangingStyle` = `background-color: black; color: white`）
+    root.setProperty('--mota-floor-curtain-bg', rgba(styles.floorChangingColor, '#000'));
+    root.setProperty('--mota-floor-curtain-color', rgba(styles.floorChangingTextColor, '#fff'));
 }
 
 ////// 呈现层接到引擎 //////
@@ -203,8 +372,17 @@ function onFloorChange(payload: Record<string, unknown>): void {
 
     const color = floor?.color;
     fx.setCurtain(Array.isArray(color) ? `rgba(${color.join(',')})` : null);
+    if (reason !== 'load') {
+        // 换层过场（旧 `#floorMsgGroup`：塔名 / 版本 / 楼层名）
+        showFloorCurtain({
+            title: String(data.tower.firstData.title ?? ''),
+            version: String(data.tower.firstData.version ?? ''),
+            floorName: String(floor?.title ?? floorId),
+        });
+    }
     if (reason !== 'load' && reason !== 'start') fx.flash('#000000', 160);
 
+    updateLayout();
     render();
     renderStatus();
 }
@@ -254,7 +432,7 @@ function onStageClick(event: MouseEvent): void {
     if ($panel.value != null) return;
     const canvas = gameCanvas;
     if (!canvas) return;
-    const tile = tileAt(canvas, event.clientX, event.clientY);
+    const tile = tileAt(canvas, event.clientX, event.clientY, TILE * layout.scale);
     if (!tile) return;
     autoRoute.click(tile.x, tile.y);
 }
@@ -302,6 +480,8 @@ const ctx: GameContext = {
     load() {
         audio.playSound('读档');
         if (runtime.load()) {
+            // 存档可能在别的楼层（地图尺寸不同），排版要重算
+            updateLayout();
             render();
             renderStatus();
             dialog.tip('已读档。');
@@ -334,6 +514,7 @@ const ctx: GameContext = {
     },
     refresh() {
         bumpRevision();
+        updateLayout();
         render();
         renderStatus();
     },
@@ -366,7 +547,7 @@ const ctx: GameContext = {
     },
     setFxCanvas(canvas) {
         if (canvas) fx.attach(canvas);
-        fx.resize(gameCanvas?.width ?? 0, gameCanvas?.height ?? 0);
+        fx.resize(gameCanvas?.width ?? 0, gameCanvas?.height ?? 0, pixelRatio());
     },
     onStageClick,
     autoRoute,
@@ -399,16 +580,37 @@ function detectMobile(): void {
     $mobile.value = coarse || window.innerWidth < 720;
 }
 
+/** 加载状态栏/工具栏的图标图集（`project/materials/icons.png`，单列 32px） */
+function loadStatusIcons(): void {
+    if (typeof document === 'undefined') return;
+    const image = new Image();
+    image.onload = () => {
+        document.documentElement.style.setProperty(
+            '--mota-status-sheet',
+            "url('/project/materials/icons.png')",
+        );
+        document.documentElement.dataset.statusIcons = 'true';
+    };
+    image.src = '/project/materials/icons.png';
+}
+
 window.addEventListener('resize', () => {
     detectMobile();
+    updateLayout();
     render();
+    renderStatus();
 });
 detectMobile();
+loadStatusIcons();
+
+// 旧 `core._init_flags`：标题 / 版本（`firstData.version` 自带 “Ver”，不再加前缀）
+document.title = `${String(data.tower.firstData.title ?? '魔塔')} - HTML5魔塔`;
 
 const root = document.querySelector<HTMLElement>('#app');
 if (!root) throw new Error('未找到 #app 容器');
 renderApp(<App ctx={ctx} />, root);
 
+updateLayout();
 render();
 renderStatus();
 animateClock.reset(performance.now());

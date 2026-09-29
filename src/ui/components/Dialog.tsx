@@ -52,6 +52,7 @@ export function Dialog({ onAdvance, resolveIcon }: DialogProps) {
                             <RichText nodes={state.nodes} resolveIcon={resolveIcon} />
                         </div>
                     )}
+                    {clickable && <div class="mota-dialog-hint">▼</div>}
                     {state.kind === 'choices' && (
                         <div class="mota-dialog-choices" onClick={stop}>
                             {state.choices.map((choice, index) => (

@@ -21,6 +21,16 @@ interface DamagePopup {
     duration: number;
 }
 
+/** 常驻显伤：每只怪物左下角的伤害数字（旧 `control.updateDamage`） */
+export interface OverlayDamage {
+    x: number;
+    y: number;
+    text: string;
+    color: string;
+    /** 从格子底部往上偏移的像素（临界值比伤害高 10px，旧版如此） */
+    dy?: number;
+}
+
 interface Flash {
     color: string;
     start: number;
@@ -101,6 +111,8 @@ export class FxLayer {
     private dirty = true;
 
     private damage: DamagePopup[] = [];
+    /** 地图显伤（怪物伤害 / 临界），由宿主在地图变化时重算 */
+    private overlayDamage: OverlayDamage[] | null = null;
     private flashes: Flash[] = [];
     private jump: Jump | null = null;
     private cursor: { x: number; y: number; color: string } | null = null;
@@ -118,16 +130,29 @@ export class FxLayer {
         this.dirty = true;
     }
 
-    resize(width: number, height: number): void {
+    /**
+     * 设置逻辑尺寸与设备像素比（旧 `_setHDCanvasSize`）。
+     *
+     * 画布背板按 `ratio` 放大，然后把变换设成 `ratio`，这样调用方（包括塔作者的
+     * 绘制指令）仍然使用「地图像素」坐标，显示尺寸由 CSS 的 `scale` 决定。
+     */
+    resize(width: number, height: number, ratio = 1): void {
         if (!this.canvas) return;
-        if (this.canvas.width !== width || this.canvas.height !== height) {
-            this.canvas.width = width;
-            this.canvas.height = height;
-            if (this.ctx) this.ctx.imageSmoothingEnabled = false;
+        const pixelRatio = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+        const backingWidth = Math.max(1, Math.round(width * pixelRatio));
+        const backingHeight = Math.max(1, Math.round(height * pixelRatio));
+        if (this.canvas.width !== backingWidth || this.canvas.height !== backingHeight) {
+            this.canvas.width = backingWidth;
+            this.canvas.height = backingHeight;
             this.dirty = true;
+        }
+        if (this.ctx) {
+            this.ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+            this.ctx.imageSmoothingEnabled = false;
         }
         this.width = width;
         this.height = height;
+        this.dirty = true;
     }
 
     //// 帧级状态 ////
@@ -183,6 +208,17 @@ export class FxLayer {
 
     clearCursor(): void {
         this.cursor = null;
+        this.dirty = true;
+    }
+
+    /**
+     * 地图显伤（旧 `control.updateDamage`）：传 `null` 清空。
+     *
+     * 位置 / 配色与旧版一致：每格左下角 `(32x+1, 32(y+1)-1)`，`bold 11px Arial`，
+     * 带黑描边。
+     */
+    setDamageOverlay(list: readonly OverlayDamage[] | null): void {
+        this.overlayDamage = list && list.length > 0 ? list.map((one) => ({ ...one })) : null;
         this.dirty = true;
     }
 
@@ -323,10 +359,11 @@ export class FxLayer {
         if (!this.dirty) return;
         this.dirty = false;
 
-        ctx.clearRect(0, 0, this.canvas?.width ?? this.width, this.canvas?.height ?? this.height);
+        ctx.clearRect(0, 0, this.width, this.height);
         this.drawCommands(ctx);
         this.drawRoute(ctx);
         this.drawCursor(ctx);
+        this.drawDamageOverlay(ctx);
         this.drawWeather(ctx);
         this.drawDamage(ctx);
         this.drawFlash(ctx);
@@ -500,6 +537,24 @@ export class FxLayer {
                 ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
                 ctx.fill();
             }
+        }
+        ctx.restore();
+    }
+
+    private drawDamageOverlay(ctx: CanvasRenderingContext2D): void {
+        const list = this.overlayDamage;
+        if (!list) return;
+        ctx.save();
+        ctx.font = 'bold 11px Arial';
+        ctx.textAlign = 'left';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+        for (const one of list) {
+            const px = one.x * TILE + 1;
+            const py = one.y * TILE + TILE - 1 - (one.dy ?? 0);
+            ctx.strokeText(one.text, px, py);
+            ctx.fillStyle = one.color;
+            ctx.fillText(one.text, px, py);
         }
         ctx.restore();
     }

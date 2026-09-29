@@ -34,6 +34,7 @@ import {
     type ScriptAction,
     turnDirection,
 } from './modules/events';
+import { formatBigNumber } from './modules/format';
 import { extractBlocks, isDoor, isEnemy, isItem, type Block } from './modules/maps';
 import { getStatusOrDefault } from './modules/status';
 import {
@@ -699,6 +700,16 @@ export class MotaRuntime {
             result.push({ x: block.x, y: block.y, id: block.event.id, ...info });
         }
         return result;
+    }
+
+    /** 该格的下一个临界值文本（旧显伤的第二行，白色），`displayCritical` 关掉时返回 null */
+    criticalAt(x: number, y: number): string | null {
+        const block = this.control.blockAt(x, y);
+        if (block?.event.displayDamage === false) return null;
+        const value = this.control.criticalValue(x, y);
+        if (value == null) return null;
+        const text = formatBigNumber(value, true);
+        return text === '???' ? '?' : text;
     }
 
     /* ---------------- 面板数据 ---------------- */

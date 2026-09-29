@@ -8,6 +8,7 @@
  * 敌人查询）都从 `BattleContext` 传入，因此可以脱离浏览器在 bun test 中锁定行为。
  */
 import type { HeroStats } from '../types';
+import { formatBigNumber } from './format';
 import { enemyBlocks, type Block } from './maps';
 import {
     getBuff,
@@ -444,7 +445,8 @@ export function getDamageString(
     else if (damage < hp) color = '#FF9933';
     else color = '#FF2222';
 
-    let text = String(damage);
+    // 旧 `getDamageString`：先按大数格式化，再补特殊属性后缀
+    let text = formatBigNumber(damage, true);
     if (hasSpecial(enemy.special, 19, ctx.enemyOf)) text += '+';
     if (hasSpecial(enemy.special, 21, ctx.enemyOf)) text += '-';
     if (hasSpecial(enemy.special, 11, ctx.enemyOf)) text += '^';

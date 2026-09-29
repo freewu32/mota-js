@@ -171,21 +171,25 @@ export class AutoRoute {
     }
 }
 
-/** 把画布坐标换算成图块坐标；越界返回 null */
+/**
+ * 把画布坐标换算成图块坐标；越界返回 null。
+ *
+ * `displayTile` 是**显示后**的格子边长（`TILE * scale`，见 `layout.ts`）：画布背板
+ * 会因为高清缩放而变大，但 CSS 尺寸才是玩家看到的，所以用 CSS 坐标除以显示边长。
+ */
 export function tileAt(
     canvas: HTMLCanvasElement,
     clientX: number,
     clientY: number,
-    tile = TILE,
+    displayTile = TILE,
 ): { x: number; y: number } | null {
     const rect = canvas.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return null;
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const px = (clientX - rect.left) * scaleX;
-    const py = (clientY - rect.top) * scaleY;
-    const x = Math.floor(px / tile);
-    const y = Math.floor(py / tile);
-    if (x < 0 || y < 0 || x >= canvas.width / tile || y >= canvas.height / tile) return null;
+    if (clientX < rect.left || clientY < rect.top) return null;
+    if (clientX >= rect.left + rect.width || clientY >= rect.top + rect.height) return null;
+    const size = displayTile > 0 ? displayTile : TILE;
+    const x = Math.floor((clientX - rect.left) / size);
+    const y = Math.floor((clientY - rect.top) / size);
+    if (x < 0 || y < 0) return null;
     return { x, y };
 }

@@ -177,6 +177,8 @@
     align-items: center;
     justify-content: center;
     z-index: 30;
+    /* 面板是盖在整页上的，字号不被地图放缩影响（旧版画在地图里，会跟着缩小） */
+    font-size: 14px;
 }
 
 .mota-panel {

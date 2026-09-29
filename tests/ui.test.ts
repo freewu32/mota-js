@@ -262,7 +262,8 @@ describe('状态栏模型', () => {
         expect(view.visibility.keys).toBe(true);
         expect(view.keys.find((one) => one.id === 'yellowKey')?.count).toBe('03');
         expect(view.keys.find((one) => one.id === 'blueKey')?.count).toBe('00');
-        expect(view.tools.find((one) => one.id === 'pickaxe')?.count).toBe('02');
+        // 旧 `controldata.updateStatusBar`：破炸飞不补零（`破2` 而不是 `破02`）
+        expect(view.tools.find((one) => one.id === 'pickaxe')?.count).toBe('2');
         expect(view.debuffs).toEqual(['毒']);
     });
 
