@@ -14,7 +14,7 @@
  */
 
 import type { HeroState } from '../types';
-import { itemCount } from './control';
+import { itemBag, itemCount, type ItemClass, type ItemData } from './control';
 import type { ChoiceItem, ScriptActionObject } from './events';
 import { getRealStatus, hasFlag } from './status';
 
@@ -508,6 +508,173 @@ export function formatMonsterManual(entries: readonly ManualEntry[]): string[] {
         lines.push('');
     }
     return lines;
+}
+
+////// ---------- 背包 / 装备 / 楼层面板 ---------- //////
+
+/** 背包面板里的一件道具 */
+export interface ToolboxEntry {
+    id: string;
+    cls: ItemClass;
+    name: string;
+    count: number;
+    text?: string;
+    /** 当前能否使用（旧 `canUseItem`） */
+    usable: boolean;
+    /** 当前能否换上（仅装备有意义） */
+    equippable: boolean;
+    /** 是否正穿在身上 */
+    equipped: boolean;
+}
+
+export interface ToolboxPanelView {
+    /** 消耗道具与永久道具分栏（旧 `_drawToolbox`） */
+    tools: ToolboxEntry[];
+    constants: ToolboxEntry[];
+    equips: ToolboxEntry[];
+}
+
+export interface ToolboxPanelContext {
+    hero: HeroState;
+    items: Record<string, ItemData>;
+    canUse?(id: string): boolean;
+    canEquip?(id: string): boolean;
+}
+
+/**
+ * 组装道具面板。
+ *
+ * 对齐旧 `functions.ui.getToolboxItems` 的默认实现：按 `hero.items[bag]` 的
+ * 键排序，过滤掉 `hideInToolbox`，并区分「消耗道具 / 永久道具 / 装备」。
+ */
+export function formatToolboxPanel(ctx: ToolboxPanelContext): ToolboxPanelView {
+    const view: ToolboxPanelView = { tools: [], constants: [], equips: [] };
+    for (const bag of ['tools', 'constants', 'equips'] as const) {
+        const owned = ctx.hero.items[bag] ?? {};
+        for (const id of Object.keys(owned).sort()) {
+            const count = owned[id] ?? 0;
+            if (count <= 0) continue;
+            const item = ctx.items[id];
+            if (item?.hideInToolbox === true) continue;
+            view[bag].push({
+                id,
+                cls: itemBag(item?.cls),
+                name: item?.name ?? id,
+                count,
+                text: typeof item?.text === 'string' ? item.text : undefined,
+                usable: ctx.canUse?.(id) ?? false,
+                equippable: ctx.canEquip?.(id) ?? false,
+                equipped: ctx.hero.equipment.includes(id),
+            });
+        }
+    }
+    return view;
+}
+
+/** 装备面板里的一件候选装备 */
+export interface EquipEntry {
+    id: string;
+    name: string;
+    equipped: boolean;
+    equippable: boolean;
+    /** 与当前装备相比的数值差 / 百分比差（旧 `compareEquipment`） */
+    value: Record<string, number>;
+    percentage: Record<string, number>;
+}
+
+export interface EquipSlotView {
+    /** 槽位下标 */
+    type: number;
+    /** 槽位名（旧 `globalAttribute.equipName`） */
+    label: string;
+    current: EquipEntry | null;
+    candidates: EquipEntry[];
+}
+
+export interface EquipPanelContext {
+    hero: HeroState;
+    items: Record<string, ItemData>;
+    equipNames: readonly string[];
+    /** 属性差计算（`MotaItems.compareEquip`） */
+    compare(equipId: string, comparedId: string | null): {
+        value?: Record<string, number>;
+        percentage?: Record<string, number>;
+    };
+    canEquip?(id: string): boolean;
+}
+
+/** 解析装备的槽位下标；字符串按 `equipNames` 查名 */
+function equipSlotOf(item: ItemData | undefined, equipNames: readonly string[]): number {
+    const equip = item?.equip as { type?: number | string } | undefined;
+    if (!equip) return -1;
+    if (typeof equip.type === 'number') return equip.type;
+    return typeof equip.type === 'string' ? equipNames.indexOf(equip.type) : -1;
+}
+
+/**
+ * 组装装备面板：每个槽位给出当前装备与可换上的候选，附带换装属性差。
+ * 对齐旧 `_drawEquipbox` / `_drawEquipbox_getStatusChanged`。
+ */
+export function formatEquipPanel(ctx: EquipPanelContext): EquipSlotView[] {
+    const slots: EquipSlotView[] = [];
+    for (let type = 0; type < ctx.equipNames.length; type += 1) {
+        const currentId = ctx.hero.equipment[type] ?? null;
+        const makeEntry = (id: string): EquipEntry => {
+            const diff = ctx.compare(id, currentId);
+            return {
+                id,
+                name: ctx.items[id]?.name ?? id,
+                equipped: id === currentId,
+                equippable: ctx.canEquip?.(id) ?? true,
+                value: { ...(diff.value ?? {}) },
+                percentage: { ...(diff.percentage ?? {}) },
+            };
+        };
+        const candidates: EquipEntry[] = [];
+        for (const id of Object.keys(ctx.items).sort()) {
+            const item = ctx.items[id];
+            if (item?.cls !== 'equips' || id === currentId) continue;
+            if (equipSlotOf(item, ctx.equipNames) !== type) continue;
+            if (itemCount(ctx.hero, id) <= 0) continue;
+            candidates.push(makeEntry(id));
+        }
+        slots.push({
+            type,
+            label: ctx.equipNames[type] ?? String(type),
+            current: currentId ? makeEntry(currentId) : null,
+            candidates,
+        });
+    }
+    return slots;
+}
+
+/** 楼层传送面板的一条楼层 */
+export interface FloorEntry {
+    floorId: string;
+    index: number;
+    name: string;
+    current: boolean;
+    /** 是否可传送（旧 `canFlyTo && hasVisitedFloor`） */
+    selectable: boolean;
+}
+
+export interface FloorPanelContext {
+    floorIds: readonly string[];
+    currentFloorId: string;
+    floorName(floorId: string): string;
+    hasVisited(floorId: string): boolean;
+    canFlyTo(floorId: string): boolean;
+}
+
+/** 组装楼层传送面板（旧 `drawFly` 的数据部分） */
+export function formatFloorPanel(ctx: FloorPanelContext): FloorEntry[] {
+    return ctx.floorIds.map((floorId, index) => ({
+        floorId,
+        index,
+        name: ctx.floorName(floorId),
+        current: floorId === ctx.currentFloorId,
+        selectable: ctx.canFlyTo(floorId) && ctx.hasVisited(floorId),
+    }));
 }
 
 ////// ---------- 对话框 ---------- //////

@@ -152,6 +152,57 @@
                 line-height: 1.6;
                 white-space: pre-wrap;
             }
+            .panel-body {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .panel-section {
+                margin-top: 8px;
+                color: #ffd479;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            .panel-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 6px;
+            }
+            .panel-entry {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 4px 8px;
+                text-align: left;
+                background: #262932;
+                color: inherit;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                cursor: pointer;
+            }
+            .panel-entry:disabled {
+                opacity: 0.45;
+                cursor: not-allowed;
+            }
+            .panel-entry.current {
+                border-color: #ffd479;
+            }
+            .panel-entry .panel-icon {
+                image-rendering: pixelated;
+                width: 32px;
+                height: 32px;
+                flex: none;
+            }
+            .panel-entry-name {
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .panel-entry-count {
+                color: #9aa0ad;
+                font-size: 12px;
+            }
             .panel-box .panel-hint {
                 margin-top: 10px;
                 color: #9aa0ad;
@@ -168,6 +219,10 @@
         <div>
             <button id="save">存档</button>
             <button id="load">读档</button>
+            <button id="book">怪物手册</button>
+            <button id="toolbox">道具</button>
+            <button id="equipbox">装备</button>
+            <button id="fly">楼层传送</button>
         </div>
         <canvas id="game" width="416" height="416"></canvas>
         <div id="dialog" hidden></div>

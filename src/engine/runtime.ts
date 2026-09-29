@@ -17,6 +17,7 @@ import {
 import { RouteRecorder, decodeRoute, encodeRoute, routeCodecFor } from './modules/actions';
 import { MotaControl, type ControlContext, type MoveResult } from './modules/control';
 import { MotaItems } from './modules/items';
+import { createTurnDispatcher, type TurnDispatcher } from './modules/turns';
 import {
     MotaEvents,
     createHeadlessPresenter,
@@ -26,7 +27,16 @@ import {
 } from './modules/events';
 import { extractBlocks, isDoor, isEnemy, isItem, type Block } from './modules/maps';
 import { getStatusOrDefault } from './modules/status';
-import { formatStatusBar, type StatusBarView } from './modules/ui';
+import {
+    formatEquipPanel,
+    formatFloorPanel,
+    formatStatusBar,
+    formatToolboxPanel,
+    type EquipSlotView,
+    type FloorEntry,
+    type StatusBarView,
+    type ToolboxPanelView,
+} from './modules/ui';
 import { applyOperator, evaluateValue, writeValue, type ValueScope } from './modules/values';
 import type { Direction, GameState, HeroState, RuntimeData, SaveData } from './types';
 
@@ -110,6 +120,8 @@ export class MotaRuntime {
     readonly events: MotaEvents;
     /** 道具与装备（旧 `core.items` / `core.material.items` 的组合） */
     readonly items: MotaItems;
+    /** 回合分发器：输入 / 录像 / 脚本共用的动作入口（旧 `replayActions`） */
+    readonly turns: TurnDispatcher;
     /** 录像路线（可编码进存档 / 分享为录像文件） */
     readonly route = new RouteRecorder();
     /** 塔作者脚本注册表（开局前用 `loadScripts` 预加载） */
@@ -183,6 +195,20 @@ export class MotaRuntime {
             changeFloor: (floorId, loc, direction) =>
                 this.applyFloorChange(floorId, loc, direction),
         });
+        this.turns = createTurnDispatcher({
+            move: (dx, dy) => this.move(dx, dy),
+            turn: (direction) => this.turn(direction),
+            canUseItem: (id) => this.items.canUse(id),
+            useItem: (id) => this.items.use(id),
+            equip: (id) => this.items.equip(id),
+            unequip: (type) => this.items.unequip(type),
+            saveLoadout: (index) => this.items.saveLoadout(index),
+            loadLoadout: (index) => this.items.loadLoadout(index),
+            changeFloorTo: (floorId) => this.flyTo(floorId),
+            record: (token) => this.route.record(token),
+        });
+        // 初始楼层视为已到达（旧 `afterChangeFloor` 首次抵达时 `visitFloor`）
+        this.visitFloor(this.state.floorId);
     }
 
     /**
@@ -206,6 +232,7 @@ export class MotaRuntime {
             ctx.hero.y = loc[1];
         }
         if (direction) ctx.hero.direction = direction as Direction;
+        this.visitFloor(this.state.floorId);
     }
 
     /** 替换事件呈现器（如接入 DOM 状态栏 / 对话框） */
@@ -447,6 +474,7 @@ export class MotaRuntime {
         const result = this.control.move(dx, dy);
         // control 内可能切换楼层，这里同步回运行时状态
         this.state.floorId = this.control.ctx.floorId;
+        this.visitFloor(this.state.floorId);
         if (result.moved) this.state.hero.steps += 1;
         // 旧引擎对每次移动尝试都记录方向（含被挡住的情况）
         this.route.record(this.control.ctx.hero.direction);
@@ -481,6 +509,85 @@ export class MotaRuntime {
             result.push({ x: block.x, y: block.y, id: block.event.id, ...info });
         }
         return result;
+    }
+
+    /* ---------------- 面板数据 ---------------- */
+
+    /** 背包面板数据 */
+    toolboxView(): ToolboxPanelView {
+        return formatToolboxPanel({
+            hero: this.state.hero,
+            items: this.data.items,
+            canUse: (id) => this.items.canUse(id),
+            canEquip: (id) => this.items.canEquip(id),
+        });
+    }
+
+    /** 装备面板数据 */
+    equipView(): EquipSlotView[] {
+        return formatEquipPanel({
+            hero: this.state.hero,
+            items: this.data.items,
+            equipNames: Array.isArray(this.data.tower.main.equipName)
+                ? (this.data.tower.main.equipName as string[])
+                : [],
+            compare: (equipId, comparedId) => this.items.compareEquip(equipId, comparedId),
+            canEquip: (id) => this.items.canEquip(id),
+        });
+    }
+
+    /** 楼层传送面板数据 */
+    floorView(): FloorEntry[] {
+        return formatFloorPanel({
+            floorIds: this.floorIds,
+            currentFloorId: this.state.floorId,
+            floorName: (floorId) => {
+                const floor = this.data.floors[floorId] as FloorData | undefined;
+                return floor?.title ?? floor?.name ?? floorId;
+            },
+            hasVisited: (floorId) => this.hasVisited(floorId),
+            canFlyTo: (floorId) => this.data.floors[floorId]?.canFlyTo === true,
+        });
+    }
+
+    /** 是否到达过某楼层（旧 `hasVisitedFloor`） */
+    hasVisited(floorId: string): boolean {
+        const visited = this.state.flags.__visited__ as Record<string, unknown> | undefined;
+        return visited?.[floorId] === true;
+    }
+
+    /** 标记楼层已到达（旧 `visitFloor`） */
+    visitFloor(floorId: string): void {
+        if (this.hasVisited(floorId)) return;
+        const visited = (this.state.flags.__visited__ as Record<string, unknown> | undefined) ?? {};
+        visited[floorId] = true;
+        this.state.flags.__visited__ = visited;
+    }
+
+    /**
+     * 楼层传送（旧 `flyTo` 的默认实现）：检查能否起飞 / 降落 / 是否到过，
+     * 记录 `fly:<floorId>` 后换层，落点取 `flyPoint`。
+     */
+    flyTo(floorId: string): boolean {
+        const from = this.data.floors[this.state.floorId] as FloorData | undefined;
+        const to = this.data.floors[floorId] as FloorData | undefined;
+        if (!from || !to) return false;
+        if (from.canFlyFrom !== true || to.canFlyTo !== true || !this.hasVisited(floorId)) {
+            this.events.host.presenter.effect?.('playSound', {
+                type: 'playSound',
+                name: '操作失败',
+            });
+            this.events.host.presenter.tip?.(`无法飞往${to.title}！`, 'fly');
+            return false;
+        }
+        this.route.record(`fly:${floorId}`);
+        const point = to.flyPoint;
+        const loc =
+            Array.isArray(point) && point.length === 2
+                ? ([Number(point[0]), Number(point[1])] as [number, number])
+                : null;
+        this.applyFloorChange(floorId, loc, null);
+        return true;
     }
 
     save(): boolean {

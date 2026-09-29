@@ -3,18 +3,14 @@ import { MaterialStore } from '../engine/materials';
 import { drawScene } from '../engine/renderer';
 import { MotaRuntime } from '../engine/runtime';
 import { TILE } from '../engine/tiles';
-import { getSpecialText } from '../engine/modules/enemys';
 import {
     AnimateClock,
     DialogController,
     STATUS_BAR_LABELS,
     createDomDialogView,
-    formatMonsterManual,
-    parseRichText,
-    richTextToPlain,
-    type ManualEntry,
     type StatusBarView,
 } from '../engine/modules/ui';
+import { renderPanel, type PanelHost } from './panels';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game');
 if (!canvas) throw new Error('未找到 #game 画布');
@@ -65,80 +61,42 @@ dialogView.onAdvance = () => {
 
 ////// 面板 //////
 
-// 旧引擎的面板画在 canvas 上（`core.ui.drawBook` / `drawFly`），新引擎把面板本体交给
-// 呈现层：`openPanel` 动作只上报面板名。这里先把怪物手册接上，楼层传送等待 UI 阶段。
+// 旧引擎的面板画在 canvas 上（`core.ui.drawBook` / `drawFly` / 道具栏），新引擎把面板
+// 数据交给 `runtime` 的纯模型，DOM 组装与点击 → 录像 token 的翻译放在 `panels.ts`。
+// 道具的实际使用 / 换装都经过 `runtime.turns`，与键盘、录像回放共用同一条路径。
 
 const panelRoot = document.querySelector<HTMLElement>('#panel');
 
-/** 当前层怪物手册条目（旧 `core.ui.drawBook` 的数据部分） */
-function monsterManualEntries(): ManualEntry[] {
-    const grouped = new Map<string, { locs: [number, number][]; damage?: string }>();
-    for (const one of runtime.listEnemies()) {
-        const found = grouped.get(one.id);
-        if (found) found.locs.push([one.x, one.y]);
-        else grouped.set(one.id, { locs: [[one.x, one.y]], damage: one.damage });
-    }
-    const asNumber = (value: unknown): number | undefined =>
-        typeof value === 'number' ? value : undefined;
-    const asText = (value: unknown): string | undefined =>
-        typeof value === 'string' ? value : undefined;
-    const entries: ManualEntry[] = [];
-    for (const [id, { locs, damage }] of grouped) {
-        const enemy = runtime.data.enemys[id];
-        entries.push({
-            id,
-            name: enemy?.name ?? id,
-            hp: enemy?.hp,
-            atk: enemy?.atk,
-            def: enemy?.def,
-            // `mdef` / `description` 不在数据 schema 的必填字段里，按需取用
-            mdef: asNumber(enemy?.mdef),
-            money: enemy?.money,
-            exp: enemy?.exp,
-            damage,
-            specials: enemy ? getSpecialText(enemy) : [],
-            description: asText(enemy?.description),
-            locs,
-        });
-    }
-    return entries;
-}
+let currentPanel: string | null = null;
+
+const panelHost: PanelHost = {
+    runtime,
+    materials,
+    close: () => closePanel(),
+    run: (token) => {
+        const ok = runtime.turns.run(token);
+        if (ok) {
+            render();
+            renderStatus();
+            panelHost.refresh();
+        }
+        return ok;
+    },
+    refresh: () => {
+        if (panelRoot && currentPanel) renderPanel(currentPanel, panelRoot, panelHost);
+    },
+    tip: (text) => dialog.tip(text),
+};
 
 function closePanel(): void {
+    currentPanel = null;
     if (panelRoot) panelRoot.hidden = true;
 }
 
 function openPanel(panel: string): void {
     if (!panelRoot) return;
-    const box = document.createElement('div');
-    box.className = 'panel-box';
-    const title = document.createElement('h2');
-    if (panel === 'monsterManual') {
-        title.textContent = `怪物手册 - ${runtime.floor.title}`;
-        box.append(title);
-        const entries = monsterManualEntries();
-        const lines = entries.length > 0 ? formatMonsterManual(entries) : ['本层没有怪物。'];
-        for (const line of lines) {
-            const row = document.createElement('div');
-            row.className = 'panel-line';
-            // 富文本标记（`\d` / `\c[]` / `\r[]`）留给后续 UI 阶段，这里先按纯文本展示
-            row.textContent = richTextToPlain(parseRichText(line));
-            box.append(row);
-        }
-    } else {
-        title.textContent = panel;
-        box.append(title);
-        const hint = document.createElement('div');
-        hint.className = 'panel-hint';
-        hint.textContent = '该面板尚未实现（UI 阶段补齐）。';
-        box.append(hint);
-    }
-    const hint = document.createElement('div');
-    hint.className = 'panel-hint';
-    hint.textContent = '点击任意处关闭';
-    box.append(hint);
-    panelRoot.replaceChildren(box);
-    panelRoot.hidden = false;
+    currentPanel = panel;
+    renderPanel(panel, panelRoot, panelHost);
 }
 
 panelRoot?.addEventListener('click', closePanel);
@@ -215,11 +173,11 @@ function render(): void {
 
 ////// 输入 //////
 
-const DIRS: Record<string, [number, number]> = {
-    ArrowUp: [0, -1],
-    ArrowDown: [0, 1],
-    ArrowLeft: [-1, 0],
-    ArrowRight: [1, 0],
+const KEY_TOKENS: Record<string, string> = {
+    ArrowUp: 'up',
+    ArrowDown: 'down',
+    ArrowLeft: 'left',
+    ArrowRight: 'right',
 };
 
 window.addEventListener('keydown', (event) => {
@@ -232,12 +190,14 @@ window.addEventListener('keydown', (event) => {
         }
         return;
     }
-    const dir = DIRS[event.key];
-    if (!dir) return;
+    // 键盘、触屏与录像回放都走同一个回合分发器
+    const token = KEY_TOKENS[event.key];
+    if (!token) return;
     event.preventDefault();
-    runtime.move(dir[0], dir[1]);
-    render();
-    renderStatus();
+    if (runtime.turns.run(token)) {
+        render();
+        renderStatus();
+    }
 });
 
 document.querySelector('#save')?.addEventListener('click', () => {
@@ -249,6 +209,12 @@ document.querySelector('#load')?.addEventListener('click', () => {
         renderStatus();
     }
 });
+
+// 面板入口（旧状态栏上的手册 / 道具 / 装备 / 传送图标）
+document.querySelector('#book')?.addEventListener('click', () => openPanel('monsterManual'));
+document.querySelector('#toolbox')?.addEventListener('click', () => openPanel('items'));
+document.querySelector('#equipbox')?.addEventListener('click', () => openPanel('equips'));
+document.querySelector('#fly')?.addEventListener('click', () => openPanel('floorMap'));
 
 // 暴露运行时，便于调试与接入脚本 API
 Object.assign(globalThis, { mota: runtime, motaApi: runtime.api, motaDialog: dialog });
