@@ -10,6 +10,8 @@ import {
 } from './modules/events';
 import { extractBlocks, isDoor, isEnemy, isItem, type Block } from './modules/maps';
 import { getStatusOrDefault } from './modules/status';
+import { formatStatusBar, type StatusBarView } from './modules/ui';
+import { evaluateValue, type ValueScope } from './modules/values';
 import type { Direction, GameState, HeroState, RuntimeData, SaveData } from './types';
 
 export interface StorageLike {
@@ -36,12 +38,21 @@ export function normalizeHero(raw: unknown): HeroState {
         const n = Number(v);
         return Number.isFinite(n) ? n : fallback;
     };
+    /** 旧数据里缺省与 0 含义不同（如 manamax 为负表示不显示魔力） */
+    const optionalNum = (v: unknown): number | undefined => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : undefined;
+    };
 
     return {
         x: num(loc.x, 1),
         y: num(loc.y, 1),
         direction: (loc.direction as HeroState['direction']) ?? 'up',
         hp: num(source.hp),
+        hpmax: optionalNum(source.hpmax),
+        name: typeof source.name === 'string' ? source.name : undefined,
+        mana: optionalNum(source.mana),
+        manamax: optionalNum(source.manamax),
         atk: num(source.atk),
         def: num(source.def),
         mdef: num(source.mdef),
@@ -70,6 +81,8 @@ export class MotaRuntime {
     private readonly storage: StorageLike | null;
     private readonly control: MotaControl;
     private readonly globals: Record<string, unknown> = {};
+    /** 塔作者脚本注入的函数（`function` 动作与表达式共用） */
+    readonly functions: Record<string, (...args: unknown[]) => unknown> = {};
     private readonly blockCache: Record<string, Block[]> = {};
     constructor(
         data: RuntimeData,
@@ -104,6 +117,7 @@ export class MotaRuntime {
             control: this.control,
             presenter,
             globals: this.globals,
+            functions: this.functions,
         });
     }
 
@@ -127,6 +141,59 @@ export class MotaRuntime {
         });
         this.blockCache[floorId] = blocks;
         return blocks;
+    }
+
+    /**
+     * 值块求值上下文（旧 `core` 里散落的 status/flags/hero 组合）。
+     * 事件、状态栏与塔作者脚本共用同一份作用域。
+     */
+    valueScope(prefix?: string): ValueScope {
+        return {
+            flags: this.state.flags,
+            values: this.data.tower.values as Record<string, unknown>,
+            globals: this.globals,
+            hero: this.state.hero,
+            enemys: this.data.enemys as Record<string, unknown>,
+            functions: this.functions,
+            prefix,
+            getBlock: (x, y) => this.control.blockAt(x, y),
+        };
+    }
+
+    /** 塔的等级表（旧 `firstData.levelUp`） */
+    get levelUp(): { need?: unknown; title?: string }[] {
+        const list = this.data.tower.firstData.levelUp;
+        return Array.isArray(list) ? (list as { need?: unknown; title?: string }[]) : [];
+    }
+
+    /** 旧 `core.getNextLvUpNeed`：下一级所需经验；满级返回 null */
+    nextLvUpNeed(): number | null {
+        const levelUp = this.levelUp;
+        const hero = this.state.hero;
+        if (levelUp.length === 0 || hero.lv >= levelUp.length) return null;
+        const need = Number(evaluateValue(levelUp[hero.lv]?.need, this.valueScope()));
+        if (!Number.isFinite(need)) return null;
+        const items = this.state.flags.statusBarItems;
+        if (Array.isArray(items) && items.includes('levelUpLeftMode')) {
+            return Math.max(need - hero.exp, 0);
+        }
+        return need;
+    }
+
+    /** 状态栏数值（旧 `controldata.updateStatusBar` 的默认实现） */
+    statusBarView(): StatusBarView {
+        const flags = this.state.flags;
+        return formatStatusBar({
+            hero: this.state.hero,
+            flags,
+            floorName: this.floor?.name ?? this.floor?.title ?? '',
+            hard: typeof flags.hard === 'string' ? flags.hard : '',
+            nextLvUpNeed: this.nextLvUpNeed(),
+            levelTitles: this.levelUp.map((one) => one.title),
+            statusBarItems: Array.isArray(flags.statusBarItems)
+                ? (flags.statusBarItems as string[])
+                : [],
+        });
     }
 
     /** 注入给塔作者脚本的 API 骨架 */

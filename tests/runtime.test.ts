@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { evaluateValue } from '../src/engine/modules/values';
 import { MotaRuntime, type StorageLike } from '../src/engine/runtime';
 import type { RuntimeData } from '../src/engine/types';
 
@@ -179,6 +180,51 @@ describe('MotaRuntime', () => {
         expect(Object.keys(rt.api).sort()).toEqual(['getState', 'load', 'move', 'save']);
         rt.api.move(-1, 0);
         expect(rt.api.getState().hero.x).toBe(0);
+    });
+
+    test('valueScope 供值块求值（含注入函数）', () => {
+        const rt = new MotaRuntime(data, null);
+        expect(evaluateValue('value:hatred', rt.valueScope())).toBe(2);
+        expect(evaluateValue('status:hp', rt.valueScope())).toBe(100);
+        rt.functions.rand = () => 7;
+        expect(evaluateValue('rand()', rt.valueScope())).toBe(7);
+    });
+
+    test('nextLvUpNeed 按等级表求值，满级返回 null', () => {
+        const withLevel: RuntimeData = structuredClone(data);
+        (withLevel.tower.firstData as Record<string, unknown>).levelUp = [
+            { need: '0', title: '新手' },
+            { need: '20', title: '学徒' },
+            { need: 'status:lv * 50', title: '老兵' },
+        ];
+        const rt = new MotaRuntime(withLevel, null);
+        expect(rt.nextLvUpNeed()).toBe(20);
+        rt.state.hero.lv = 2;
+        expect(rt.nextLvUpNeed()).toBe(100); // 2 * 50
+        rt.state.hero.lv = 3;
+        expect(rt.nextLvUpNeed()).toBeNull(); // 已满级
+    });
+
+    test('levelUpLeftMode 时下一级经验按差值显示', () => {
+        const withLevel: RuntimeData = structuredClone(data);
+        (withLevel.tower.firstData as Record<string, unknown>).levelUp = [
+            { need: '0' },
+            { need: '20' },
+        ];
+        withLevel.tower.flags.statusBarItems = ['enableLevelUp', 'levelUpLeftMode'];
+        const rt = new MotaRuntime(withLevel, null);
+        rt.state.hero.exp = 5;
+        expect(rt.nextLvUpNeed()).toBe(15);
+    });
+
+    test('statusBarView 反映状态栏开关与道具', () => {
+        const rt = new MotaRuntime(data, null);
+        expect(rt.statusBarView().visibility.slots).toEqual([]);
+        expect(rt.statusBarView().slots.floor).toBe('1'); // 楼层名取自 floor.name
+
+        rt.move(-1, 0); // 拾取黄钥匙
+        const bar = rt.statusBarView();
+        expect(bar.keys.find((one) => one.id === 'yellowKey')?.count).toBe('01');
     });
 
     test('listEnemies 返回怪物伤害信息', () => {

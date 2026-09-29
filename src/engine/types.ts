@@ -21,6 +21,13 @@ export interface HeroItems {
 /** 勇士的数值属性（不含坐标） */
 export interface HeroStats {
     hp: number;
+    /** 生命上限；缺省时状态栏按当前生命显示 */
+    hpmax?: number;
+    /** 勇士名（状态栏显示） */
+    name?: string;
+    /** 魔力与魔力上限（旧 hero.mana / manamax） */
+    mana?: number;
+    manamax?: number;
     atk: number;
     def: number;
     mdef: number;

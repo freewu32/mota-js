@@ -6,7 +6,8 @@
  */
 import type { HeroStats, HeroState } from '../types';
 
-export type StatusName = 'hp' | 'atk' | 'def' | 'mdef' | 'money' | 'exp' | 'lv' | 'steps' | 'hpmax';
+export type StatusName =
+    'hp' | 'hpmax' | 'mana' | 'manamax' | 'atk' | 'def' | 'mdef' | 'money' | 'exp' | 'lv' | 'steps';
 
 /** 用于临时覆盖勇士属性的部分状态（如临界值计算时假设的攻击力） */
 export type HeroOverride = Partial<Record<StatusName, number>>;
