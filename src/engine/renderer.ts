@@ -144,3 +144,29 @@ export function drawHeroSprite(
     );
     return true;
 }
+
+/** 跟随者绘制所需的一帧状态（图片名 + 位置 + 朝向 + 是否在走） */
+export interface FollowerSprite extends HeroPos {
+    name?: string;
+    direction?: string;
+    stop?: boolean;
+}
+
+/**
+ * 绘制跟随者（旧 `_drawHero_getDrawObjs` 里把 `hero.followers` 一起排序绘制的部分）。
+ *
+ * 复用勇士的帧表（`icons.hero`），图片按名字从 `images` 里取；缺图的跟随者跳过。
+ */
+export function drawFollowers(
+    ctx: CanvasRenderingContext2D,
+    images: Record<string, CanvasImageSource | undefined>,
+    icons: HeroIcons | undefined,
+    followers: readonly FollowerSprite[],
+    frame = 0,
+): void {
+    for (const follower of followers) {
+        const image = images[follower.name ?? ''];
+        if (!image) continue;
+        drawHeroSprite(ctx, image, icons, follower, frame, follower.stop !== true);
+    }
+}

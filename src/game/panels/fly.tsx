@@ -73,6 +73,25 @@ function FloorThumb({ ctx, floorId }: { ctx: GameContext; floorId: string }) {
     );
 }
 
+/** 本层剩余图块统计：塔作者用 `firstData.ui.statistics` 或 `mota.ui.register` 配置 */
+function MapStatistics({ ctx }: { ctx: GameContext }) {
+    const items = ctx.runtime.statisticsView();
+    if (items.length === 0) return null;
+    return (
+        <>
+            <div class="mota-section">当前层剩余</div>
+            <div class="mota-grid">
+                {items.map((item) => (
+                    <div class="mota-entry" key={item.id}>
+                        <span class="mota-entry-name">{item.name}</span>
+                        <span class="mota-entry-count">{item.count}</span>
+                    </div>
+                ))}
+            </div>
+        </>
+    );
+}
+
 /** 地图浏览：把已到达楼层的地图并排画出来（旧 `viewMaps` 面板） */
 export function ViewMapPanel({ ctx, close }: GamePanelProps) {
     const visited = ctx.runtime.floorIds.filter(
@@ -97,6 +116,7 @@ export function ViewMapPanel({ ctx, close }: GamePanelProps) {
             }
         >
             {visited.length === 0 && <div class="mota-muted">还没有到过任何楼层。</div>}
+            <MapStatistics ctx={ctx} />
             <div class="mota-views">
                 {visited.map((id) => (
                     <FloorThumb key={id} ctx={ctx} floorId={id} />

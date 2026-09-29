@@ -22,6 +22,11 @@ import {
     type PositionEventType,
 } from './modules/floor-events';
 import { createTurnDispatcher, type TurnDispatcher } from './modules/turns';
+import { MotaShops, type ShopData, type ShopEntry } from './modules/shops';
+import { UiHookRegistry, type UiHooks } from './modules/ui-hooks';
+import { orderToolboxItems, parseUiConfig, statisticsIds, type UiConfig } from './modules/ui-config';
+import { gatherFollowers, type Follower } from './modules/followers';
+import { findDirectPath, findPath, type PathStep } from './modules/path';
 import {
     MotaEvents,
     createHeadlessPresenter,
@@ -49,6 +54,14 @@ import {
     type ValueScope,
 } from './modules/values';
 import type { Direction, GameState, HeroState, RuntimeData, SaveData } from './types';
+
+/** 方向 → 位移（自动寻路逐步行走用） */
+const DELTA: Record<string, readonly [number, number]> = {
+    up: [0, -1],
+    down: [0, 1],
+    left: [-1, 0],
+    right: [1, 0],
+};
 
 export interface StorageLike {
     getItem(key: string): string | null;
@@ -104,6 +117,10 @@ export function normalizeHero(raw: unknown): HeroState {
         equipment: Array.isArray(source.equipment)
             ? [...(source.equipment as (string | null)[])]
             : [],
+        // 旧存档里跟随者可能缺失
+        followers: Array.isArray(source.followers)
+            ? (source.followers as Follower[]).map((one) => ({ ...one }))
+            : [],
         // 旧 `control._initStatistics`：统计字段在旧存档里可能缺失，这里统一补全
         statistics: {
             totalTime: 0,
@@ -138,6 +155,10 @@ export class MotaRuntime {
     readonly scripts = new ScriptRegistry();
     /** 楼层生命周期事件（firstArrive / eachArrive / autoEvent / afterBattle…） */
     readonly floorEvents: FloorEvents;
+    /** 全局商店（旧 shop 插件） */
+    readonly shops: MotaShops;
+    /** 塔作者 UI 钩子（`mota.ui.register`） */
+    readonly uiHooks = new UiHookRegistry();
     private readonly storage: StorageLike | null;
     private readonly control: MotaControl;
     private readonly globals: Record<string, unknown> = {};
@@ -172,6 +193,7 @@ export class MotaRuntime {
             floorIds: this.floorIds,
             getFloor: (id) => this.data.floors[id] as FloorData,
             getBlocks: (id) => this.getBlocks(id),
+            beforeBattleAt: (x, y, enemyId) => this.beforeBattleAt(x, y, enemyId),
         };
         this.control = new MotaControl(ctx);
         this.items = new MotaItems({
@@ -209,10 +231,20 @@ export class MotaRuntime {
             // 剧本发起的战斗 / 拾取，同样要跑楼层的位置事件
             onAfterBattle: (_enemyId, x, y) => this.floorEvents.after('afterBattle', x, y),
             onAfterGetItem: (_itemId, x, y) => this.floorEvents.after('afterGetItem', x, y),
+            beforeBattleAt: (x, y, enemyId) => this.beforeBattleAt(x, y, enemyId),
+            onFollowerChange: () => this.events.host.presenter.update?.(),
             // autoEvent 执行完清理「执行中」标记（旧 `eventdata.autoEvent` 的收尾函数）
             actions: {
                 autoEventReset: (data) => {
                     this.floorEvents.clearExecuting(String(data.symbol ?? ''));
+                },
+                // 剧本里的 `openShop` / `disableShop`（旧 `_action_openShop`）
+                openShop: (data) => {
+                    this.shops.handleScriptAction(data);
+                },
+                disableShop: (data) => {
+                    const id = String(data.id ?? '');
+                    if (id) this.shops.setVisited(id, false);
                 },
             },
         });
@@ -226,6 +258,27 @@ export class MotaRuntime {
             getFlag: (name, fallback) => this.getFlag(name, fallback),
             setFlag: (name, value) => this.setFlag(name, value),
         });
+        this.shops = new MotaShops({
+            all: () => {
+                const list = this.data.tower.firstData.shops;
+                return Array.isArray(list) ? (list as ShopData[]) : [];
+            },
+            get: (id) => {
+                const list = this.data.tower.firstData.shops;
+                if (!Array.isArray(list)) return undefined;
+                return (list as ShopData[]).find((shop) => shop.id === id);
+            },
+            getFlag: (name, fallback) => this.getFlag(name, fallback),
+            setFlag: (name, value) => this.setFlag(name, value),
+            quickShopAllowed: () => {
+                const floor = this.floor as Record<string, unknown> | undefined;
+                return floor?.canUseQuickShop !== false;
+            },
+            run: (actions) => void this.events.start(actions),
+            record: (token) => this.route.record(token),
+            evaluate: (expression) => evaluateCondition(expression, this.valueScope(), ''),
+            insertCommonEvent: (name, args) => this.events.insertCommonEvent(name, args),
+        });
         this.turns = createTurnDispatcher({
             move: (dx, dy) => this.move(dx, dy),
             turn: (direction) => this.turn(direction),
@@ -236,6 +289,7 @@ export class MotaRuntime {
             saveLoadout: (index) => this.items.saveLoadout(index),
             loadLoadout: (index) => this.items.loadLoadout(index),
             changeFloorTo: (floorId) => this.flyTo(floorId),
+            openShop: (id, noRoute) => this.shops.open(id, noRoute),
             record: (token) => this.route.record(token),
         });
     }
@@ -251,6 +305,25 @@ export class MotaRuntime {
     /** 每帧驱动：检查自动事件（旧 `core.checkAutoEvents`） */
     update(): void {
         this.floorEvents.checkAutoEvents();
+    }
+
+    /**
+     * 战前剧本：楼层 `beforeBattle["x,y"]` 与怪物自己的 `beforeBattle`（旧
+     * `_sys_battle` 会把它们与随后的 `battle` 动作一起插入事件队列）。
+     */
+    private beforeBattleAt(x: number, y: number, enemyId: string): ScriptAction[] | null {
+        const floor = this.data.floors[this.state.floorId] as Record<string, unknown> | undefined;
+        const list: ScriptAction[] = [];
+        const position = (floor?.beforeBattle ?? {}) as Record<string, unknown>;
+        const fromEnemy = (this.data.enemys[enemyId] as Record<string, unknown> | undefined)
+            ?.beforeBattle;
+        // 旧 `_sys_battle` 是 `core.push(list, ...)`：数组展开一层，其余原样
+        for (const source of [position[`${x},${y}`], fromEnemy]) {
+            if (source == null) continue;
+            if (Array.isArray(source)) list.push(...(source as ScriptAction[]));
+            else list.push(source as ScriptAction);
+        }
+        return list.length > 0 ? list : null;
     }
 
     private getFlag(name: string, fallback: unknown = null): unknown {
@@ -298,6 +371,8 @@ export class MotaRuntime {
             ctx.hero.y = loc[1];
         }
         if (direction) ctx.hero.direction = direction as Direction;
+        // 换层后跟随者聚拢到新位置（旧 `changeFloor` 里的 `gatherFollowers`）
+        gatherFollowers(ctx.hero.followers ?? [], ctx.hero);
         this.arrive(this.state.floorId, from, reason);
     }
 
@@ -462,6 +537,8 @@ export class MotaRuntime {
             equip: (id) => this.items.equip(id),
             unequip: (id) => this.items.unequip(this.items.equipTypeById(id)),
             effect: (type, data) => this.events.host.presenter.effect?.(type, data),
+            registerUiHooks: (hooks) => this.registerUiHooks(hooks),
+            openQuickShop: (id) => this.openQuickShop(id),
         };
     }
 
@@ -505,6 +582,21 @@ export class MotaRuntime {
         return this.scripts.loadAll(missing, loader);
     }
 
+    /**
+     * 加载并立即执行一个「UI 脚本」（`firstData.ui.script`）。
+     *
+     * UI 钩子（`mota.ui.register`）与道具脚本不同：它不需要等某个道具被使用，
+     * 加载后就要跑一遍把钩子注册进去。返回是否成功。
+     */
+    async setupUiScript(name: string | null | undefined): Promise<boolean> {
+        if (!name) return false;
+        const failed = await this.loadScripts([name]);
+        if (failed.length > 0) return false;
+        const actions = this.runScript(name, { trigger: 'function' });
+        if (actions.length > 0) this.events.start(actions);
+        return true;
+    }
+
     /** 该格是否可通行 */
     canPass(x: number, y: number): boolean {
         return this.control.canPass(x, y);
@@ -546,7 +638,19 @@ export class MotaRuntime {
             this.arrive(current, from, 'move');
         } else {
             this.visitFloor(current);
-            this.runPositionEvent(result);
+            if (result.deferred && result.before) {
+                // 战前剧本：先跑剧本，最后重新触发本次战斗（旧 `_sys_battle`）
+                this.events.start([
+                    ...result.before,
+                    {
+                        type: 'battle',
+                        loc: [result.x, result.y],
+                        skipBeforeBattle: true,
+                    },
+                ]);
+            } else {
+                this.runPositionEvent(result);
+            }
         }
         if (result.moved) this.state.hero.steps += 1;
         // 旧引擎对每次移动尝试都记录方向（含被挡住的情况）
@@ -606,7 +710,47 @@ export class MotaRuntime {
             items: this.data.items,
             canUse: (id) => this.items.canUse(id),
             canEquip: (id) => this.items.canEquip(id),
+            order: (cls, ids) =>
+                orderToolboxItems(cls, ids, {
+                    config: this.uiConfig,
+                    hooks: this.uiHooks,
+                    nameOf: (id) => this.data.items[id]?.name ?? id,
+                }),
         });
+    }
+
+    /* ---------------- 塔作者 UI 定制 ---------------- */
+
+    /** `firstData.ui`（旧 `functions.ui` 的声明式部分） */
+    get uiConfig(): UiConfig {
+        return parseUiConfig((this.data.tower.firstData as Record<string, unknown>).ui);
+    }
+
+    /** 注册 UI 钩子（`mota.ui.register`） */
+    registerUiHooks(hooks: UiHooks): void {
+        this.uiHooks.register(hooks);
+    }
+
+    /** 帮助 / 关于文本：脚本钩子 → `firstData.ui.about` → 空 */
+    aboutText(): string {
+        return this.uiHooks.about() ?? this.uiConfig.about ?? '';
+    }
+
+    /**
+     * 地图浏览 / 统计面板的剩余图块统计（旧 `drawStatistics`）。
+     *
+     * 统计项由 `firstData.ui.statistics` 或脚本钩子给出；只统计当前楼层还没被
+     * 拿走的图块（与旧 `_drawViewMaps` 一致）。
+     */
+    statisticsView(): { id: string; name: string; count: number }[] {
+        const ids = statisticsIds({ config: this.uiConfig, hooks: this.uiHooks });
+        if (ids.length === 0) return [];
+        const blocks = this.getBlocks(this.state.floorId);
+        return ids.map((id) => ({
+            id,
+            name: this.data.items[id]?.name ?? id,
+            count: blocks.filter((block) => !block.disable && block.event.id === id).length,
+        }));
     }
 
     /** 装备面板数据 */
@@ -634,6 +778,117 @@ export class MotaRuntime {
             hasVisited: (floorId) => this.hasVisited(floorId),
             canFlyTo: (floorId) => this.data.floors[floorId]?.canFlyTo === true,
         });
+    }
+
+    /* ---------------- 商店 ---------------- */
+
+    /** 快捷商店列表（旧 `_drawQuickShop`）：只列当前可选的商店 */
+    shopView(): ShopEntry[] {
+        return this.shops.listIds().map((id) => {
+            const shop = this.shops.get(id);
+            return {
+                id,
+                text: shop?.textInList ?? id,
+                visited: this.shops.isVisited(id),
+                canOpen: this.shops.canOpen(id),
+            };
+        });
+    }
+
+    /**
+     * 打开快捷商店（旧 `events.openQuickShop`）：
+     * 没有商店 / 商店未开启 / 当前楼层不允许时给出提示音与提示，返回 false。
+     */
+    openQuickShop(id?: string): boolean {
+        const ids = this.shops.listIds();
+        if (ids.length === 0) {
+            this.tip('本游戏没有快捷商店！', undefined, true);
+            return false;
+        }
+        const target = id ?? ids[0];
+        if (!target || !this.shops.canOpen(target)) {
+            this.tip('当前无法打开快捷商店！', undefined, true);
+            return false;
+        }
+        const message = this.shops.canUseQuickShop(target);
+        if (message != null) {
+            this.tip(message, undefined, true);
+            return false;
+        }
+        return this.shops.open(target, false);
+    }
+
+    /** 失败提示的音效 + 气泡（旧 `playSound('操作失败')` + `drawTip`） */
+    private tip(text: string, icon?: string, failSound = false): void {
+        if (failSound) {
+            this.events.host.presenter.effect?.('playSound', { type: 'playSound', name: '操作失败' });
+        }
+        this.events.host.presenter.tip?.(text, icon);
+    }
+
+    /* ---------------- 自动寻路 ---------------- */
+
+    /** 自动寻路：勇士当前位置到 `(x, y)` 的逐步路径（旧 `maps.automaticRoute`） */
+    findPath(x: number, y: number): PathStep[] {
+        const floor = this.floor;
+        if (!floor) return [];
+        return findPath(
+            floor,
+            this.getBlocks(this.state.floorId),
+            { x: this.state.hero.x, y: this.state.hero.y },
+            { x, y },
+            { cost: (cx, cy) => this.pathCost(cx, cy) },
+        );
+    }
+
+    /** 单击瞬移用的「透明路径」（旧 `canMoveDirectlyArray`） */
+    findDirectPath(x: number, y: number): PathStep[] {
+        const floor = this.floor;
+        if (!floor) return [];
+        return findDirectPath(
+            floor,
+            this.getBlocks(this.state.floorId),
+            { x: this.state.hero.x, y: this.state.hero.y },
+            { x, y },
+        );
+    }
+
+    /**
+     * 旧 `_automaticRoute_deepAdd`：给格子加额外代价，让寻路绕开亮灯 / 路障，
+     * 开启 `__potionNoRouting__` 时也绕开血瓶与绿宝石。
+     *
+     * 旧版还会按「领域 / 阻击 / 捕捉」伤害加价，新引擎尚未实现这些地图技能（见文档）。
+     */
+    private pathCost(x: number, y: number): number {
+        const block = this.control.blockAt(x, y);
+        if (!block || block.disable) return 0;
+        const id = block.event.id;
+        let cost = 0;
+        if (id === 'light') cost += 100;
+        if (id.endsWith('Net') && this.getFlag(id.slice(0, -3)) == null) cost += 100;
+        if (
+            this.getFlag('__potionNoRouting__') === true &&
+            (id.endsWith('Potion') || id === 'greenGem')
+        ) {
+            cost += 100;
+        }
+        return cost;
+    }
+
+    /**
+     * 单击瞬移（旧 `control.tryMoveDirectly`）：沿「完全没有图块」的通道瞬移过去。
+     *
+     * 实现上仍然逐步走，因此录像里与手动行走完全一致；通道上没有图块，
+     * 因此不会触发拾取 / 战斗。
+     */
+    tryMoveDirectly(x: number, y: number): boolean {
+        const path = this.findDirectPath(x, y);
+        if (path.length === 0) return false;
+        for (const step of path) {
+            const delta = DELTA[step.direction];
+            this.move(delta[0], delta[1]);
+        }
+        return true;
     }
 
     /** 是否到达过某楼层（旧 `hasVisitedFloor`） */

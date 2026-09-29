@@ -196,7 +196,9 @@
     "blueKing": 45,
     "keiskeiFairy": 71,
     "tulipFairy": 72,
-    "purpleBowman": 65
+    "purpleBowman": 65,
+    "demoGuard": 8,
+    "demoChief": 12
   },
   "enemy48": {
     "angel": 0,

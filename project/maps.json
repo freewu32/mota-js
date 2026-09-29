@@ -1291,5 +1291,13 @@
   "330": {
     "cls": "enemy48",
     "id": "bearUp"
+  },
+  "1000": {
+    "cls": "enemys",
+    "id": "demoGuard"
+  },
+  "1001": {
+    "cls": "enemys",
+    "id": "demoChief"
   }
 }

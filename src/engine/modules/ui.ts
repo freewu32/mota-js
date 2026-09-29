@@ -539,6 +539,11 @@ export interface ToolboxPanelContext {
     items: Record<string, ItemData>;
     canUse?(id: string): boolean;
     canEquip?(id: string): boolean;
+    /**
+     * 排序（塔作者定制入口）：传入背包类型与本类的道具 id，返回显示顺序。
+     * 不传则按 id 升序；旧对应 `functions.ui.getToolboxItems`。
+     */
+    order?(cls: string, ids: readonly string[]): string[];
 }
 
 /**
@@ -546,12 +551,14 @@ export interface ToolboxPanelContext {
  *
  * 对齐旧 `functions.ui.getToolboxItems` 的默认实现：按 `hero.items[bag]` 的
  * 键排序，过滤掉 `hideInToolbox`，并区分「消耗道具 / 永久道具 / 装备」。
+ * 排序交给 `ctx.order`（塔作者可用 `firstData.ui.toolboxSort` 或脚本钩子覆盖）。
  */
 export function formatToolboxPanel(ctx: ToolboxPanelContext): ToolboxPanelView {
     const view: ToolboxPanelView = { tools: [], constants: [], equips: [] };
     for (const bag of ['tools', 'constants', 'equips'] as const) {
         const owned = ctx.hero.items[bag] ?? {};
-        for (const id of Object.keys(owned).sort()) {
+        const ids = Object.keys(owned).filter((id) => (owned[id] ?? 0) > 0);
+        for (const id of ctx.order?.(bag, ids) ?? ids.sort()) {
             const count = owned[id] ?? 0;
             if (count <= 0) continue;
             const item = ctx.items[id];

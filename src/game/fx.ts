@@ -104,6 +104,8 @@ export class FxLayer {
     private flashes: Flash[] = [];
     private jump: Jump | null = null;
     private cursor: { x: number; y: number; color: string } | null = null;
+    /** 自动寻路的路线预览（旧 route 图层） */
+    private route: { x: number; y: number }[] | null = null;
     private commands: DrawCommand[] = [];
     private weather: { name: string; level: number; particles: WeatherParticle[] } | null = null;
     private curtain: string | null = null;
@@ -181,6 +183,15 @@ export class FxLayer {
 
     clearCursor(): void {
         this.cursor = null;
+        this.dirty = true;
+    }
+
+    /**
+     * 自动寻路的路线预览（旧 `_setAutomaticRoute_drawRoute` 的 route 图层）：
+     * 连线 + 终点方块。传 null 清除。
+     */
+    setRoute(steps: readonly { x: number; y: number }[] | null): void {
+        this.route = steps && steps.length > 0 ? steps.map((one) => ({ ...one })) : null;
         this.dirty = true;
     }
 
@@ -314,6 +325,7 @@ export class FxLayer {
 
         ctx.clearRect(0, 0, this.canvas?.width ?? this.width, this.canvas?.height ?? this.height);
         this.drawCommands(ctx);
+        this.drawRoute(ctx);
         this.drawCursor(ctx);
         this.drawWeather(ctx);
         this.drawDamage(ctx);
@@ -429,6 +441,33 @@ export class FxLayer {
     drawRegisteredImage: (ctx: CanvasRenderingContext2D, data: Record<string, unknown>) => void = () => {
         /* 未注册：忽略 */
     };
+
+    /** 旧 `_setAutomaticRoute_drawRoute`：8px 灰线连起每一格，终点画实心方块 */
+    private drawRoute(ctx: CanvasRenderingContext2D): void {
+        const route = this.route;
+        if (!route || route.length === 0) return;
+        ctx.save();
+        ctx.fillStyle = '#bfbfbf';
+        ctx.strokeStyle = '#bfbfbf';
+        ctx.lineWidth = 8;
+        route.forEach((step, index) => {
+            const cx = step.x * TILE + TILE / 2;
+            const cy = step.y * TILE + TILE / 2;
+            if (index === route.length - 1) {
+                ctx.fillRect(step.x * TILE + 10, step.y * TILE + 10, 12, 12);
+                return;
+            }
+            const next = route[index + 1]!;
+            const dx = Math.sign(next.x - step.x);
+            const dy = Math.sign(next.y - step.y);
+            ctx.beginPath();
+            ctx.moveTo(cx - dx * 11, cy - dy * 11);
+            ctx.lineTo(cx, cy);
+            ctx.lineTo(cx + dx * 11, cy + dy * 11);
+            ctx.stroke();
+        });
+        ctx.restore();
+    }
 
     private drawCursor(ctx: CanvasRenderingContext2D): void {
         const cursor = this.cursor;

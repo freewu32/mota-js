@@ -12,7 +12,7 @@ import './styles.css';
 import { render as renderApp } from 'preact';
 import { loadTower } from '../engine/loader';
 import { MaterialStore } from '../engine/materials';
-import { drawHeroSprite, drawScene } from '../engine/renderer';
+import { drawFollowers, drawHeroSprite, drawScene } from '../engine/renderer';
 import { MotaRuntime } from '../engine/runtime';
 import { TILE } from '../engine/tiles';
 import { AnimateClock, DialogController } from '../engine/modules/ui';
@@ -27,10 +27,12 @@ import {
     $theme,
     openPanel,
     parseTheme,
+    $panel,
     setStatus,
     setTheme,
 } from '../ui';
 import { App } from './app';
+import { AutoRoute, tileAt } from './autopath';
 import { loadImage } from './assets';
 import { AudioPlayer } from './audio';
 import type { GameContext } from './context';
@@ -85,6 +87,15 @@ if (failedScripts.length > 0) {
     console.error(`以下脚本加载失败，相关道具/事件会退化为无效果：${failedScripts.join('、')}`);
 }
 
+// UI 钩子脚本（旧 `functions.ui`）：塔作者在 `firstData.ui.script` 里登记
+const uiScript = (data.tower.firstData as Record<string, unknown>).ui as
+    | { script?: string }
+    | undefined;
+if (uiScript?.script) {
+    const ok = await runtime.setupUiScript(uiScript.script);
+    if (!ok) console.error(`UI 脚本加载失败：${uiScript.script}`);
+}
+
 ////// 画面 //////
 
 let gameCanvas: HTMLCanvasElement | null = null;
@@ -102,6 +113,32 @@ const heroIcons = (data.icons as Record<string, unknown>).hero as
     | import('../engine/renderer').HeroIcons
     | undefined;
 
+/**
+ * 跟随者用的图片（旧 `material.images.images`）：`main.images` 里的文件按文件名索引，
+ * 剧本 `follow` 传的就是这个文件名（如 `bear.png`）。懒加载，缺图时该跟随者不绘制。
+ */
+const followerImages: Record<string, HTMLImageElement | undefined> = {};
+const loadingFollowers = new Set<string>();
+
+function ensureFollowerImage(name: string): void {
+    if (followerImages[name] || loadingFollowers.has(name)) return;
+    loadingFollowers.add(name);
+    void loadImage(`/project/images/${name}`).then((image) => {
+        loadingFollowers.delete(name);
+        if (image) {
+            followerImages[name] = image;
+            render();
+        }
+    });
+}
+
+/** 跟随者精灵：按名字取图，缺图的先发起加载（加载完重绘） */
+function followerSprites(): import('../engine/renderer').FollowerSprite[] {
+    const followers = runtime.state.hero.followers ?? [];
+    for (const follower of followers) ensureFollowerImage(follower.name);
+    return followers;
+}
+
 function render(): void {
     if (!gameCanvas || !gameCtx) return;
     const width = (runtime.floor.map[0]?.length ?? 13) * TILE;
@@ -116,6 +153,11 @@ function render(): void {
     const hero = override ? { x: override.x, y: override.y } : runtime.state.hero;
     drawScene(gameCtx, runtime.floor, data.maps, hero, materials, animate, heroImage == null);
     if (heroImage) {
+        // 跟随者画在勇士之前，保证勇士在最上层（旧版按 y 排序，这里简化）
+        const followers = followerSprites();
+        if (followers.length > 0) {
+            drawFollowers(gameCtx, followerImages, heroIcons, followers, animate);
+        }
         drawHeroSprite(
             gameCtx,
             heroImage,
@@ -187,6 +229,35 @@ function onEffect(type: string, payload: Record<string, unknown>): void {
     }
 }
 runtime.setPresenter(dialog);
+
+/** 自动寻路：点地图走 / 单击瞬移 / 点自己转向（旧 `setAutomaticRoute`） */
+const autoRoute = new AutoRoute({
+    runtime,
+    setRoute: (steps) => fx.setRoute(steps),
+    step: (direction) => runtime.turns.run(direction),
+    blocked: () => dialog.busy || $dialogBusy.value || $panel.value != null,
+    refresh: () => {
+        bumpRevision();
+        render();
+        renderStatus();
+    },
+});
+
+/** 地图点击：命中格子交给自动寻路；没有命中就当作「继续对话」 */
+function onStageClick(event: MouseEvent): void {
+    if (dialog.busy) {
+        dialog.advance();
+        render();
+        renderStatus();
+        return;
+    }
+    if ($panel.value != null) return;
+    const canvas = gameCanvas;
+    if (!canvas) return;
+    const tile = tileAt(canvas, event.clientX, event.clientY);
+    if (!tile) return;
+    autoRoute.click(tile.x, tile.y);
+}
 
 ////// 上下文 //////
 
@@ -297,6 +368,8 @@ const ctx: GameContext = {
         if (canvas) fx.attach(canvas);
         fx.resize(gameCanvas?.width ?? 0, gameCanvas?.height ?? 0);
     },
+    onStageClick,
+    autoRoute,
 };
 
 ////// 回合反馈：显伤与音效 //////
@@ -315,6 +388,7 @@ runtime.turns.onOutcome((outcome) => {
         }
     }
     if (outcome.token.startsWith('item:')) audio.playSound('确定');
+    if (outcome.token.startsWith('shop:')) audio.playSound('商店');
     if (outcome.token.startsWith('fly:')) audio.playSound('飞行器');
 });
 
@@ -346,6 +420,7 @@ function loop(now: number): void {
         render();
     }
     dialog.tick(now);
+    autoRoute.update();
     const fxAnimating = fx.update(now);
     if (fxAnimating) render();
     fx.draw();

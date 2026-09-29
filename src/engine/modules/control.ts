@@ -25,6 +25,8 @@ import {
     type Block,
 } from './maps';
 import { addStatus, hasFlag, setFlag, triggerDebuff, type DebuffType } from './status';
+import { updateFollowers } from './followers';
+import type { ScriptAction } from './events';
 
 /**
  * 道具数据。
@@ -69,6 +71,12 @@ export interface ControlContext {
     getFloor(floorId: string): FloorData;
     /** 取得某层可变的 block 列表 */
     getBlocks(floorId: string): Block[];
+    /**
+     * 某位置的战前剧本（楼层 `beforeBattle["x,y"]` 与怪物自己的 `beforeBattle`）。
+     * 返回**扁平**的动作列表；非空时本次碰怪不会立即开打，
+     * 而是先执行这段剧本再执行 `battle` 动作。
+     */
+    beforeBattleAt?: (x: number, y: number, enemyId: string) => ScriptAction[] | null;
     /**
      * 拾取「即捡即用类」道具的处理（由 `items.ts` 注入）。
      * 返回 true 表示效果已就地生效、道具不进入背包。
@@ -133,6 +141,12 @@ export interface MoveResult {
     damage?: number;
     /** 拾取提示（仅 action === 'item'，如「生命+100」） */
     tip?: string;
+    /**
+     * 本次碰怪被战前剧本推迟了（`before` 为要先生效的剧本），
+     * 由运行时插入「战前剧本 + battle」而不是现在就结算。
+     */
+    deferred?: boolean;
+    before?: ScriptAction[];
 }
 
 export class MotaControl {
@@ -213,6 +227,11 @@ export class MotaControl {
                 return { moved: false, action: opened ? 'door' : 'none', x, y };
             }
             if (isEnemy(block.event)) {
+                // 战前剧本：推迟战斗（旧 `_sys_battle` 里 push beforeBattle + battle）
+                const before = this.ctx.beforeBattleAt?.(x, y, block.event.id);
+                if (before && before.length > 0) {
+                    return { moved: false, action: 'battle', x, y, deferred: true, before };
+                }
                 const damage = this.battle(block);
                 return {
                     moved: false,
@@ -229,6 +248,8 @@ export class MotaControl {
 
         this.ctx.hero.x = x;
         this.ctx.hero.y = y;
+        // 跟随者跟着走（旧 `control.moveHero` 末尾的 `updateFollowers`）
+        updateFollowers(this.ctx.hero.followers ?? [], this.ctx.hero);
 
         const landed = this.blockAt(x, y);
         if (landed && !landed.disable) {
@@ -295,10 +316,10 @@ export class MotaControl {
         const enemyInfo = getEnemyInfo(enemy, null, block.x, block.y, ctx);
         hero.hp -= info.damage;
 
-        // 战后奖励；诅咒时无金币与经验
+        // 战后奖励；诅咒时无金币与经验。支援怪（旧 `guards`）一起结算
         if (!hasFlag(this.ctx.flags, 'curse')) {
-            hero.money += enemyInfo.money;
-            hero.exp += enemyInfo.exp;
+            hero.money += enemyInfo.money + this.guardSum(enemyInfo.guards, 'money');
+            hero.exp += enemyInfo.exp + this.guardSum(enemyInfo.guards, 'exp');
         }
 
         // 仇恨：击杀积累，与仇恨怪战斗后释放一半
@@ -312,7 +333,28 @@ export class MotaControl {
 
         this.applyAfterBattle(enemy);
         this.disableBlock(block);
+        // 支援怪与主怪一起消失（旧 tower 是在 `beforeBattle` 里把支援怪跳到当前位置，
+        // 再用 `jump` 的 `keep: false` 抹掉原位置；这里直接移除它们自己的图块）
+        for (const [gx, gy] of enemyInfo.guards) {
+            const guard = this.blockAt(gx, gy);
+            if (guard && !guard.disable && isEnemy(guard.event)) this.disableBlock(guard);
+        }
         return info.damage;
+    }
+
+    /** 支援怪属性求和（旧 `guards.reduce(...)`） */
+    private guardSum(
+        guards: readonly [number, number, string][],
+        field: 'money' | 'exp',
+    ): number {
+        let sum = 0;
+        for (const [, , id] of guards) {
+            const enemy = this.ctx.enemys[id];
+            if (!enemy) continue;
+            const info = getEnemyInfo(enemy, null, null, null, this.battleContext());
+            sum += info[field];
+        }
+        return sum;
     }
 
     private applyAfterBattle(enemy: EnemyData): void {

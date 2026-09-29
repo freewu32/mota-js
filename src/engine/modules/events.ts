@@ -16,6 +16,7 @@ import { MotaControl, addItem, type ControlContext } from './control';
 import { triggerDebuff, type DebuffType } from './status';
 import { blockAt, isDoor, isEnemy, isItem, matchesFilter, resolveEvent, type Block } from './maps';
 import { createBuiltins, resolveFloorId } from './builtins';
+import { createFollower, gatherFollowers } from './followers';
 import {
     applyOperator,
     evaluateCondition,
@@ -28,6 +29,9 @@ import {
 
 export type ScriptAction = string | ScriptActionObject;
 
+/** 事件列表：旧格式里一个动作位也可以直接写数组，等价于顺序执行 */
+export type ScriptActionList = ScriptAction | ScriptAction[];
+
 export interface ScriptActionObject {
     type: string;
     [key: string]: unknown;
@@ -35,7 +39,7 @@ export interface ScriptActionObject {
 
 export interface ChoiceItem {
     text: string;
-    action?: ScriptAction;
+    action?: ScriptActionList;
     condition?: string;
     need?: string;
     _disabled?: boolean;
@@ -108,6 +112,13 @@ export interface EventsHost extends ControlContext {
     onAfterBattle?(enemyId: string, x: number, y: number): void;
     onAfterGetItem?(itemId: string, x: number, y: number): void;
     onStatusChange?(): void;
+    /** 跟随者增减（旧 `gatherFollowers` 后重绘） */
+    onFollowerChange?(): void;
+    /**
+     * 某位置的战前剧本（扁平动作列表）：楼层 `beforeBattle["x,y"]` 与怪物自己的
+     * `beforeBattle`。返回非空时战斗会被推迟，先跑这段剧本再执行 `battle` 动作。
+     */
+    beforeBattleAt?(x: number, y: number, enemyId: string): ScriptAction[] | null;
 }
 
 export interface StartOptions {
@@ -137,14 +148,19 @@ function normalizeList(actions: unknown): ScriptAction[] {
     return [actions as ScriptAction];
 }
 
-/** 默认（无 UI）呈现器：文本直接继续、选择项视为超时、确认框不选任何分支 */
+/**
+ * 默认（无 UI）呈现器：文本直接继续、确认框不选任何分支。
+ *
+ * 选择项取**最后一项**而不是「不选」：`while(true)` + 选择项的商店 / 菜单
+ * （如全局商店的「离开」固定在最后）因此能自然退出，不会空转。
+ */
 export function createHeadlessPresenter(): EventPresenter {
     return {
         sleep: (ms, done) => {
             setTimeout(done, Math.max(0, ms));
         },
-        choices: (_text, _choices, _data, done) => {
-            done(null);
+        choices: (_text, choices, _data, done) => {
+            done(choices.length > 0 ? choices.length - 1 : null);
         },
         confirm: (_text, _data, done) => {
             done(null);
@@ -154,6 +170,9 @@ export function createHeadlessPresenter(): EventPresenter {
         },
     };
 }
+
+/** 同步循环（无 UI 的对话 / 选择项自动应答）的轮数上限，防止塔作者写出死循环卡死页面 */
+const MAX_SYNC_ROUNDS = 2000;
 
 /** 已知由 UI / 音频层处理的视觉类动作，未实现时静默交给 presenter.effect */
 const VISUAL_ACTIONS = new Set([
@@ -165,8 +184,6 @@ const VISUAL_ACTIONS = new Set([
     'moveTextBox',
     'clearTextBox',
     'autoTextScroll',
-    'follow',
-    'unfollow',
     'animate',
     'stopAnimate',
     'setViewport',
@@ -281,6 +298,8 @@ export class MotaEvents {
             wait: this.actionWait,
             function: this.actionFunction,
             update: this.actionUpdate,
+            follow: this.actionFollow,
+            unfollow: this.actionUnfollow,
             win: this.actionWin,
             lose: this.actionLose,
             restart: this.actionRestart,
@@ -435,9 +454,20 @@ export class MotaEvents {
         }
         this.running = true;
         try {
+            let rounds = 0;
             do {
                 this.resumeRequested = false;
                 this.loop();
+                rounds += 1;
+                // 对话 / 选择项被「同步应答」（无 UI 的呈现器，或塔作者脚本自己应答）时，
+                // `while(true)` 会在这里空转。达到上限就停下来，别把标签页卡死。
+                if (rounds > MAX_SYNC_ROUNDS) {
+                    console.error(
+                        '事件同步循环次数过多，已中止：请检查是否存在 while(true) + 无交互动作。',
+                    );
+                    this.stop();
+                    break;
+                }
             } while (this.resumeRequested && !this.finished);
         } finally {
             this.running = false;
@@ -1105,6 +1135,17 @@ export class MotaEvents {
             block = this.control.blockAt(lx, ly);
         }
         if (!block || block.disable || !isEnemy(block.event)) return;
+        // 战前剧本：先跑 beforeBattle，再回来打（`skipBeforeBattle` 防止死循环）
+        if (!data.skipBeforeBattle) {
+            const before = this.host.beforeBattleAt?.(block.x, block.y, block.event.id);
+            if (before && before.length > 0) {
+                this.insert([
+                    ...before,
+                    { ...data, skipBeforeBattle: true, loc: [block.x, block.y] },
+                ]);
+                return;
+            }
+        }
         const damage = this.control.battle(block);
         if (damage != null) this.host.onAfterBattle?.(block.event.id, block.x, block.y);
         this.host.presenter.update?.();
@@ -1272,6 +1313,48 @@ export class MotaEvents {
     private actionUpdate(): void {
         this.host.presenter.update?.();
         this.host.onStatusChange?.();
+    }
+
+    /* ---------------- 跟随者 ---------------- */
+
+    /**
+     * 旧 `events.follow`：增加一个跟随者（图片名）。
+     * 没加载过这张图片时不生效（与旧实现一致）。
+     */
+    private actionFollow(
+        data: ScriptActionObject,
+        _x: number | null,
+        _y: number | null,
+        prefix: string,
+    ): void {
+        const name = replaceText(data.name, this.scope(), prefix);
+        if (!name) return;
+        const hero = this.control.ctx.hero;
+        const followers = (hero.followers ??= []);
+        if (followers.some((one) => one.name === name)) return;
+        followers.push(createFollower(name, hero));
+        gatherFollowers(followers, hero);
+        this.host.onFollowerChange?.();
+    }
+
+    /** 旧 `events.unfollow`：给名字去掉一个，不给名字则清空全部 */
+    private actionUnfollow(
+        data: ScriptActionObject,
+        _x: number | null,
+        _y: number | null,
+        prefix: string,
+    ): void {
+        const hero = this.control.ctx.hero;
+        const followers = (hero.followers ??= []);
+        if (data.name == null || data.name === '') {
+            followers.length = 0;
+        } else {
+            const name = replaceText(data.name, this.scope(), prefix);
+            const index = followers.findIndex((one) => one.name === name);
+            if (index >= 0) followers.splice(index, 1);
+        }
+        gatherFollowers(followers, hero);
+        this.host.onFollowerChange?.();
     }
 
     /* ---------------- 结局 ---------------- */

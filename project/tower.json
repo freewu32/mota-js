@@ -714,7 +714,19 @@
           }
         ]
       }
-    ]
+    ],
+    "ui": {
+      "statistics": [
+        "yellowKey",
+        "blueKey",
+        "redKey",
+        "redPotion",
+        "bluePotion"
+      ],
+      "toolboxSort": "name",
+      "about": "这里是塔作者写的说明（firstData.ui.about）。",
+      "script": "ui"
+    }
   },
   "values": {
     "lavaDamage": 100,

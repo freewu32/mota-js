@@ -1,4 +1,5 @@
 import type { Enemys, FloorData, Icons, Items, Maps, TowerData } from '../shared/data/schema';
+import type { Follower } from './modules/followers';
 
 export interface RuntimeData {
     tower: TowerData;
@@ -70,6 +71,8 @@ export interface HeroState extends HeroStats {
     x: number;
     y: number;
     direction: Direction;
+    /** 跟随者（旧 `hero.followers`）：剧本 `follow` / `unfollow` 增删；normalizeHero 总会补上 */
+    followers?: Follower[];
 }
 
 export interface GameState {

@@ -69,8 +69,17 @@ export function bindKeyboard(ctx: GameContext, hooks: InputHooks): () => void {
     return () => window.removeEventListener('keydown', onKeyDown);
 }
 
-/** 触屏：滑动一步走一格，轻点等价于「继续对话」 */
-export function bindTouch(target: HTMLElement, ctx: GameContext, hooks: InputHooks): () => void {
+/**
+ * 触屏：滑动一步走一格。
+ *
+ * 轻点不在这里处理：鼠标与触屏的轻点都会产生 `click`，统一交给
+ * `GameContext.onStageClick`（继续对话 / 自动寻路），避免一次点击推进两页对话。
+ */
+export function bindTouch(
+    target: HTMLElement,
+    ctx: GameContext,
+    _hooks: InputHooks,
+): () => void {
     const threshold = 24;
     let start: { x: number; y: number } | null = null;
 
@@ -84,10 +93,7 @@ export function bindTouch(target: HTMLElement, ctx: GameContext, hooks: InputHoo
         if (!origin) return;
         const dx = event.clientX - origin.x;
         const dy = event.clientY - origin.y;
-        if (Math.abs(dx) < threshold && Math.abs(dy) < threshold) {
-            if (hooks.busy()) hooks.advance();
-            return;
-        }
+        if (Math.abs(dx) < threshold && Math.abs(dy) < threshold) return;
         if (Math.abs(dx) > Math.abs(dy)) ctx.run(dx > 0 ? 'right' : 'left');
         else ctx.run(dy > 0 ? 'down' : 'up');
     };

@@ -14,6 +14,7 @@ const TOOLBAR: [string, string, string][] = [
     ['fly', '楼层传送', 'floorMap'],
     ['viewmap', '地图浏览', 'viewMap'],
     ['statistics', '统计', 'statistics'],
+    ['shop', '商店', 'shops'],
     ['save', '存读档', 'save'],
     ['settings', '设置', 'settings'],
     ['help', '帮助', 'help'],
@@ -65,7 +66,11 @@ export function App({ ctx }: { ctx: GameContext }) {
             </div>
             <StatusBar />
             <Toolbar ctx={ctx} />
-            <div class="mota-stage" ref={stage}>
+            <div
+                class="mota-stage"
+                ref={stage}
+                onClick={(event) => ctx.onStageClick(event as MouseEvent)}
+            >
                 <canvas
                     id="game"
                     class="mota-map"

@@ -49,6 +49,8 @@ export interface TurnHost {
     saveLoadout(index: number): void;
     loadLoadout(index: number): boolean;
     changeFloorTo(floorId: string): boolean;
+    /** 打开全局商店（`noRoute` 为真时不重复记录像，供回放使用） */
+    openShop(id: string, noRoute: boolean): boolean;
     record(token: string): void;
 }
 
@@ -85,6 +87,7 @@ export class TurnDispatcher {
         this.register('saveEquip', (token) => this.onSaveEquip(token));
         this.register('loadEquip', (token) => this.onLoadEquip(token));
         this.register('fly', (token) => this.onFly(token));
+        this.register('shop', (token) => this.onShop(token));
     }
 
     /** 注册（或覆盖）一个处理器 */
@@ -216,6 +219,15 @@ export class TurnDispatcher {
         if (!token.startsWith('fly:')) return false;
         const floorId = token.slice(4);
         if (floorId.length === 0 || !this.host.changeFloorTo(floorId)) return false;
+        this.emit({ token });
+        return true;
+    }
+
+    private onShop(token: string): boolean {
+        if (!token.startsWith('shop:')) return false;
+        const id = token.slice(5);
+        // 商店本身会把自己记进录像，这里只负责复现（noRoute）
+        if (id.length === 0 || !this.host.openShop(id, true)) return false;
         this.emit({ token });
         return true;
     }

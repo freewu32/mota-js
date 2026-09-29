@@ -84,7 +84,22 @@ declare module 'mota:types' {
         | 'items'
         | 'equips'
         | 'help'
-        | 'statistics';
+        | 'statistics'
+        | 'shops'
+        | 'shop';
+
+    /**
+     * 塔作者 UI 钩子（旧 `functions.ui` 的脚本版）。
+     * 钩子只返回数据，不接触 DOM；未提供时回退到 `firstData.ui`。
+     */
+    export interface UiHooks {
+        /** 旧 `getToolboxItems(cls)`：道具栏的显示项与顺序 */
+        getToolboxItems?(cls: string, ids: readonly string[]): string[] | null;
+        /** 旧 `drawStatistics()`：地图浏览 / 统计面板里要统计的图块 id */
+        statistics?(): string[] | null;
+        /** 旧 `drawAbout()`：关于 / 帮助文本 */
+        about?(): string | null;
+    }
 
     /**
      * 游戏 API。
@@ -154,6 +169,11 @@ declare module 'mota:types' {
 
         /* 界面 */
         openPanel(panel: PanelName, data?: Record<string, unknown>): void;
+        /** UI 定制与快捷商店 */
+        readonly ui: {
+            register(hooks: UiHooks): void;
+            openShop(id?: string): boolean;
+        };
     }
 
     /** 脚本触发时机 */

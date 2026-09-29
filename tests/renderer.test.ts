@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { drawHeroSprite, drawScene, resolveElement, type TilePainter } from '../src/engine/renderer';
+import {
+    drawFollowers,
+    drawHeroSprite,
+    drawScene,
+    resolveElement,
+    type TilePainter,
+} from '../src/engine/renderer';
 import type { FloorData } from '../src/shared/data/schema';
 
 /** 记录被调用的 canvas 方法名的假上下文 */
@@ -123,5 +129,62 @@ describe('drawHeroSprite', () => {
         // 没有该朝向 → 不绘制
         expect(drawHeroSprite(ctx, {} as CanvasImageSource, icons, { x: 0, y: 0, direction: 'up' })).toBe(false);
         expect(drawHeroSprite(ctx, {} as CanvasImageSource, undefined, { x: 0, y: 0 })).toBe(false);
+    });
+});
+
+describe('drawFollowers', () => {
+    function fakeCtx() {
+        const calls: unknown[][] = [];
+        const ctx = {
+            drawImage: (...args: unknown[]) => void calls.push(args),
+            fillStyle: '',
+            beginPath: () => {},
+            arc: () => {},
+            fill: () => {},
+            strokeStyle: '',
+            strokeRect: () => {},
+            fillRect: () => {},
+            calls,
+        };
+        return ctx as unknown as CanvasRenderingContext2D & { calls: unknown[][] };
+    }
+
+    const icons = {
+        width: 32,
+        height: 48,
+        down: { loc: 0, stop: 0, leftFoot: 1, rightFoot: 3 },
+        left: { loc: 1, stop: 0, leftFoot: 1, rightFoot: 3 },
+        right: { loc: 2, stop: 0, leftFoot: 1, rightFoot: 3 },
+        up: { loc: 3, stop: 0, leftFoot: 1, rightFoot: 3 },
+    };
+
+    test('按名字取图并复用勇士帧表绘制', () => {
+        const ctx = fakeCtx();
+        const image = {} as CanvasImageSource;
+        drawFollowers(
+            ctx,
+            { 'bear.png': image },
+            icons,
+            [{ name: 'bear.png', x: 2, y: 3, direction: 'right', stop: false }],
+            1,
+        );
+        expect(ctx.calls).toHaveLength(1);
+        const args = ctx.calls[0] as unknown[];
+        expect(args[0]).toBe(image);
+        // 走路帧循环：frame=1 -> leftFoot(1)；行取 right 的 loc=2
+        expect(args[1]).toBe(32);
+        expect(args[2]).toBe(96);
+        expect(args[5]).toBe(2 * 32);
+        expect(args[6]).toBe(3 * 32 + 32 - 48);
+    });
+
+    test('缺图的跟随者跳过；没有图标表时全部跳过', () => {
+        const ctx = fakeCtx();
+        drawFollowers(ctx, {}, icons, [{ name: 'ghost.png', x: 0, y: 0 }]);
+        expect(ctx.calls).toHaveLength(0);
+        drawFollowers(ctx, { 'bear.png': {} as CanvasImageSource }, undefined, [
+            { name: 'bear.png', x: 0, y: 0 },
+        ]);
+        expect(ctx.calls).toHaveLength(0);
     });
 });

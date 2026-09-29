@@ -19,6 +19,7 @@ import { itemCount } from './control';
 import { evaluateValue, type ValueScope } from './values';
 import type { FloorData } from '../../shared/data/schema';
 import type { HeroState } from '../types';
+import type { UiHooks } from './ui-hooks';
 
 /**
  * 值块 / 标记的取值结果。
@@ -30,7 +31,15 @@ export type Value =
     number | string | boolean | null | undefined | Record<string, unknown> | unknown[];
 
 /** 面板类型（旧 `core.ui.drawBook` / `drawFly` / 道具栏等） */
-export type PanelName = 'monsterManual' | 'floorMap' | 'items' | 'equips' | 'help' | 'statistics';
+export type PanelName =
+    | 'monsterManual'
+    | 'floorMap'
+    | 'items'
+    | 'equips'
+    | 'help'
+    | 'statistics'
+    | 'shops'
+    | 'shop';
 
 /** 道具脚本需要知道的道具信息 */
 export interface ApiItemData {
@@ -69,6 +78,10 @@ export interface GameApiHost {
     unequip(id: string): boolean;
     /** 播放音效 / 弹提示 / 打开面板，交给呈现层 */
     effect(type: string, data: Record<string, unknown>): void;
+    /** 注册 UI 钩子（旧 `functions.ui` 的脚本版） */
+    registerUiHooks?(hooks: UiHooks): void;
+    /** 打开快捷商店（旧 `events.openQuickShop`） */
+    openQuickShop?(id?: string): boolean;
 }
 
 /**
@@ -151,6 +164,15 @@ export interface GameApi {
     /* —— 界面 —— */
     /** 打开面板（怪物手册、楼层传送、道具栏…）；具体呈现交给 UI 层 */
     openPanel(panel: PanelName, data?: Record<string, unknown>): void;
+    /**
+     * 塔作者 UI 定制（旧 `functions.ui`）：`mota.ui.register({ getToolboxItems, statistics, about })`。
+     * 钩子只返回数据，不接触 DOM；未提供时回退到 `firstData.ui`。
+     */
+    readonly ui: {
+        register(hooks: UiHooks): void;
+        /** 打开快捷商店；不给 id 时按旧规则选第一个可用商店 */
+        openShop(id?: string): boolean;
+    };
 }
 
 function toActions(value: ScriptAction | ScriptAction[] | void): ScriptAction[] {
@@ -270,6 +292,10 @@ export function createGameApi(host: GameApiHost): GameApi {
         playSound: (name) => host.effect('playSound', { name }),
 
         openPanel: (panel, data = {}) => host.effect('openPanel', { panel, ...data }),
+        ui: {
+            register: (hooks) => host.registerUiHooks?.(hooks),
+            openShop: (id) => Boolean(host.openQuickShop?.(id)),
+        },
     };
 }
 

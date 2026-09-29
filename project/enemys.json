@@ -876,5 +876,33 @@
       "right": "bearRight",
       "up": "bearUp"
     }
+  },
+  "demoGuard": {
+    "name": "骷髅卫兵（支援）",
+    "hp": 60,
+    "atk": 30,
+    "def": 2,
+    "money": 2,
+    "exp": 2,
+    "point": 0,
+    "special": [
+      26
+    ]
+  },
+  "demoChief": {
+    "name": "骷髅队长（战前剧情）",
+    "hp": 80,
+    "atk": 40,
+    "def": 5,
+    "money": 5,
+    "exp": 5,
+    "point": 0,
+    "special": [],
+    "beforeBattle": [
+      {
+        "type": "text",
+        "text": "骷髅队长：站住！\\n\\n想过去就先过我这一关。"
+      }
+    ]
   }
 }

@@ -4,6 +4,7 @@ import type { GameContext } from '../context';
 import { BookPanel } from './book';
 import { EquipPanel } from './equip';
 import { FlyPanel, ViewMapPanel } from './fly';
+import { ShopPanel } from './shop';
 import { HelpPanel, SaveLoadPanel, SettingsPanel, StatisticsPanel } from './system';
 import { ToolboxPanel } from './toolbox';
 import type { GamePanelProps } from './shared';
@@ -20,6 +21,8 @@ const PANELS: Record<string, ComponentType<GamePanelProps>> = {
     settings: SettingsPanel,
     statistics: StatisticsPanel,
     help: HelpPanel,
+    shops: ShopPanel,
+    shop: ShopPanel,
 };
 
 /** 面板出口：读 `$panel`，渲染对应面板；塔作者自绘面板没有注册时给个占位 */

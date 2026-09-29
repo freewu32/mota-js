@@ -1,5 +1,6 @@
 import { STATUS_BAR_LABELS, type StatusBarSlot } from '../../engine/modules/ui';
 import { $theme, Panel } from '../../ui';
+import type { GameContext } from '../context';
 import type { GamePanelProps } from './shared';
 
 /** 存读档 */
@@ -89,6 +90,7 @@ export function StatisticsPanel({ ctx, close }: GamePanelProps) {
             <div class="mota-line">
                 到达楼层：{visited.length} / {ctx.runtime.floorIds.length}
             </div>
+            <StatisticsItems ctx={ctx} />
         </Panel>
     );
 }
@@ -106,8 +108,26 @@ const KEY_HELP: [string, string][] = [
     ['Esc', '关闭面板'],
 ];
 
-/** 帮助：键位说明 */
+/** 塔作者配置的剩余图块统计（旧 `functions.ui.drawStatistics`） */
+function StatisticsItems({ ctx }: { ctx: GameContext }) {
+    const items = ctx.runtime.statisticsView();
+    if (items.length === 0) return null;
+    return (
+        <>
+            <div class="mota-section">本层剩余</div>
+            {items.map((item) => (
+                <div class="mota-entry" key={item.id}>
+                    <span class="mota-entry-name">{item.name}</span>
+                    <span class="mota-entry-count">{item.count}</span>
+                </div>
+            ))}
+        </>
+    );
+}
+
+/** 帮助：键位说明 + 塔作者的说明文本（旧 `functions.ui.drawAbout`） */
 export function HelpPanel({ ctx, close }: GamePanelProps) {
+    const about = ctx.runtime.aboutText();
     return (
         <Panel title="帮助" onClose={close} footer="触屏设备可用右下角虚拟键盘或滑动操作">
             <div class="mota-grid">
@@ -118,6 +138,7 @@ export function HelpPanel({ ctx, close }: GamePanelProps) {
                     </div>
                 ))}
             </div>
+            {about && <div class="mota-line">{about}</div>}
             <div class="mota-line mota-muted">
                 当前塔：{ctx.runtime.data.tower.firstData.title} v
                 {ctx.runtime.data.tower.firstData.version}

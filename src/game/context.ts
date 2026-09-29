@@ -7,6 +7,7 @@
  */
 import type { MaterialStore } from '../engine/materials';
 import type { MotaRuntime } from '../engine/runtime';
+import type { AutoRoute } from './autopath';
 import type { AudioPlayer } from './audio';
 import type { FxLayer } from './fx';
 
@@ -38,4 +39,8 @@ export interface GameContext {
     setGameCanvas(canvas: HTMLCanvasElement | null): void;
     /** 特效画布（`#fx`） */
     setFxCanvas(canvas: HTMLCanvasElement | null): void;
+    /** 地图舞台被点击：命中格子则自动寻路，否则当作「继续对话」 */
+    onStageClick(event: MouseEvent): void;
+    /** 自动寻路控制器（点击 / 长按地图） */
+    autoRoute: AutoRoute;
 }

@@ -342,8 +342,8 @@
     [
       0,
       0,
-      0,
-      0,
+      1000,
+      1001,
       0,
       0,
       0,
@@ -763,7 +763,24 @@
   "ratio": 1,
   "width": 26,
   "height": 26,
-  "firstArrive": [],
+  "firstArrive": [
+    {
+      "type": "follow",
+      "name": "hero.png"
+    },
+    {
+      "type": "text",
+      "text": "一个影子跟上了你。\\n\\n（演示跟随者：走几步，它会跟在身后；剧本里用 follow / unfollow 控制）"
+    },
+    {
+      "type": "openShop",
+      "id": "shop1"
+    },
+    {
+      "type": "text",
+      "text": "（已开启 1F 金币商店：点工具栏的「商店」就能买了。\\n地图左边 (2,12)/(3,12) 是演示怪：队长带战前剧本，卫兵是支援怪。）"
+    }
+  ],
   "changeFloor": {
     "6,10": {
       "floorId": "sample1",
@@ -782,6 +799,13 @@
   "bgmap": [],
   "fgmap": [],
   "autoEvent": {},
-  "beforeBattle": {},
+  "beforeBattle": {
+    "3,12": [
+      {
+        "type": "text",
+        "text": "（这是楼层 beforeBattle：战斗前先跑一段剧本。）"
+      }
+    ]
+  },
   "cannotMoveIn": {}
 }
