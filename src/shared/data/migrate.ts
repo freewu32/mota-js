@@ -10,7 +10,13 @@ import {
     mapsSchema,
     towerDataSchema,
 } from './schema';
-import { translateItemActions, translateItemCondition, translateTipText } from './item-effect';
+import {
+    translateActionsDeep,
+    translateItemActions,
+    translateItemCondition,
+    translateKnownItem,
+    translateTipText,
+} from './item-effect';
 
 /**
  * 迁移道具的效果字段。
@@ -24,6 +30,10 @@ export type MigratedItems = Record<string, Record<string, unknown>>;
 interface MigrateItemsResult {
     items: MigratedItems;
     untranslated: string[];
+    /** 迁移提示：行为变化、需人工确认之处 */
+    notes: string[];
+    /** 数据里引用、需塔作者自备的脚本 */
+    scriptRefs: string[];
 }
 
 /**
@@ -41,11 +51,38 @@ function safeTranslate<T>(label: string, report: string[], run: () => T): T | nu
 
 function migrateItems(raw: unknown): MigrateItemsResult {
     const untranslated: string[] = [];
+    const notes: string[] = [];
+    const scriptRefs: string[] = [];
     const source = (raw ?? {}) as Record<string, Record<string, unknown>>;
     const items: MigratedItems = {};
     for (const [id, original] of Object.entries(source)) {
         const item: Record<string, unknown> = { ...original };
+        /** 已被迁移规则处理的字段，不再走逐条语句翻译 */
+        const handled = new Set<string>();
+        // 先试成句道具的迁移规则（效果里是函数 / 循环 / 提前返回的写法）
+        const known = safeTranslate(`${id}.useItemEffect`, untranslated, () =>
+            translateKnownItem({
+                id,
+                name: String(item.name ?? id),
+                effect: String(item.useItemEffect ?? item.itemEffect ?? ''),
+                condition: String(item.canUseItemEffect ?? ''),
+            }),
+        );
+        if (known) {
+            if (known.useItemEffect !== undefined) {
+                item.useItemEffect = known.useItemEffect;
+                handled.add('useItemEffect');
+            }
+            if (known.canUseItemEffect !== undefined) {
+                if (known.canUseItemEffect === null) delete item.canUseItemEffect;
+                else item.canUseItemEffect = known.canUseItemEffect;
+                handled.add('canUseItemEffect');
+            }
+            if (known.script) scriptRefs.push(`${id} -> project/scripts/${known.script}.ts`);
+            for (const note of known.notes ?? []) notes.push(`${id}：${note}`);
+        }
         for (const field of ['itemEffect', 'useItemEffect'] as const) {
+            if (handled.has(field)) continue;
             const script = item[field];
             if (script == null) continue;
             const result = safeTranslate(`${id}.${field}`, untranslated, () =>
@@ -59,7 +96,7 @@ function migrateItems(raw: unknown): MigrateItemsResult {
             item[`${field}Legacy`] = script;
             delete item[field];
         }
-        if (typeof item.canUseItemEffect === 'string') {
+        if (!handled.has('canUseItemEffect') && typeof item.canUseItemEffect === 'string') {
             const condition = item.canUseItemEffect;
             const result = safeTranslate(`${id}.canUseItemEffect`, untranslated, () =>
                 translateItemCondition(condition),
@@ -77,12 +114,18 @@ function migrateItems(raw: unknown): MigrateItemsResult {
             );
             if (translated != null && translated !== item[field]) item[field] = translated;
         }
-        if (item.useItemEvent != null && JSON.stringify(item.useItemEvent).includes('core.')) {
-            untranslated.push(`${id}.useItemEvent：含 core 引用，需人工迁移`);
+        if (item.useItemEvent != null) {
+            const translated = safeTranslate(`${id}.useItemEvent`, untranslated, () =>
+                translateActionsDeep(item.useItemEvent),
+            );
+            if (translated) item.useItemEvent = translated;
+            else if (JSON.stringify(item.useItemEvent).includes('core.')) {
+                untranslated.push(`${id}.useItemEvent：含 core 引用，需人工迁移`);
+            }
         }
         items[id] = item;
     }
-    return { items, untranslated };
+    return { items, untranslated, notes, scriptRefs };
 }
 export interface MigrateOptions {
     /** 旧数据目录（含 data.js、floors/*.js 等） */
@@ -100,6 +143,10 @@ export interface MigrateResult {
     scripts: string[];
     /** 需人工迁移的道具效果字段（含原因） */
     untranslated: string[];
+    /** 迁移提示（行为变化、需人工确认之处） */
+    notes: string[];
+    /** 数据里引用、需塔作者自备的脚本 */
+    scriptRefs: string[];
 }
 
 /**
@@ -165,7 +212,7 @@ export async function migrate(options: MigrateOptions): Promise<MigrateResult> {
 
     // items.js -> items.json：效果字段需要把旧 JS 片段转成剧本动作 / 值块表达式
     const rawItems = await readAssignment(join(from, 'items.js'), VAR_PATTERN);
-    const { items, untranslated } = migrateItems(rawItems);
+    const { items, untranslated, notes, scriptRefs } = migrateItems(rawItems);
     await write('items.json', itemsSchema.parse(items));
 
     // floors/*.js -> floors/<id>.json
@@ -186,5 +233,5 @@ export async function migrate(options: MigrateOptions): Promise<MigrateResult> {
         if (await Bun.file(path).exists()) scripts.push(`${name}.js`);
     }
 
-    return { files, floors, scripts, untranslated };
+    return { files, floors, scripts, untranslated, notes, scriptRefs };
 }

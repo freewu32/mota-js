@@ -99,6 +99,9 @@ declare module 'mota:types' {
         blockId(x: number, y: number, floorId?: string): string | null;
         blockNumber(x: number, y: number, floorId?: string): number | null;
         blockCls(x: number, y: number, floorId?: string): string | null;
+        /** 某点图块的属性（如 `canBreak`），空格 / 禁用图块为 null */
+        blockAttr(x: number, y: number, attr: string, floorId?: string): Value;
+        /** 按 id / cls / 属性名统计某层图块数量 */
         blockCount(idOrCls: string, floorId?: string): number;
         mapWidth(floorId?: string): number;
         mapHeight(floorId?: string): number;
@@ -123,6 +126,10 @@ declare module 'mota:types' {
         /* 道具与装备 */
         itemName(id: string): string;
         enemyName(id: string): string;
+        /** 该 id 是否为怪物（旧 `cls.indexOf('enemy') == 0`） */
+        isEnemy(id: string): boolean;
+        /** 怪物属性（旧 `core.material.enemys[id].xxx`） */
+        enemyAttr(id: string, attr: string): Value;
         itemCount(id: string): number;
         hasItem(id: string): boolean;
         addItem(id: string, count?: number): void;

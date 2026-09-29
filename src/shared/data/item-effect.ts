@@ -354,3 +354,336 @@ export function translateTipText(tip: unknown): string | undefined {
         return translated == null ? whole : `\${${translated}}`;
     });
 }
+
+////// 成句道具的迁移规则 //////
+
+/** 规则匹配上下文：道具 id / 名称与旧字段原文 */
+export interface ItemRuleContext {
+    id: string;
+    /** 道具名，用于生成「xxx使用成功」这类提示 */
+    name: string;
+    /** 旧 `useItemEffect` / `itemEffect` 原文（可能为空） */
+    effect: string;
+    /** 旧 `canUseItemEffect` 原文（可能为空） */
+    condition: string;
+}
+
+/** 规则产出的新字段 */
+export interface ItemRuleResult {
+    /** 新的 `useItemEffect`；未设置表示不改动该字段 */
+    useItemEffect?: unknown;
+    /** 新的 `canUseItemEffect`；`null` 表示删除该字段 */
+    canUseItemEffect?: string | null;
+    /** 需塔作者自备的脚本（相对 `project/scripts/`，不含扩展名） */
+    script?: string;
+    /** 迁移提示：行为变化、需人工确认之处 */
+    notes?: string[];
+}
+
+interface ItemRule {
+    /** 规则名（用于测试与排查） */
+    name: string;
+    match(ctx: ItemRuleContext): boolean;
+    build(ctx: ItemRuleContext): ItemRuleResult;
+}
+
+/** 「用不成会退还」的旧写法：新写法改成条件不满足就不能用，提示作者行为有变 */
+const REFUND_NOTE =
+    '旧写法在效果里判断失败后退还道具（canUseItemEffect 恒为真），已改为 canUseItemEffect 条件：不满足时不能使用，同样不消耗';
+
+function tip(ctx: ItemRuleContext, suffix = '使用成功'): string {
+    return `${ctx.name}${suffix}`;
+}
+
+function readVar(source: string, name: string): string | null {
+    const match = source.match(new RegExp(`(?:var\\s+)?${name}\\s*=\\s*([^;]+);`));
+    return match ? match[1]!.trim() : null;
+}
+
+/** 去掉单/双引号 */
+function unquote(text: string): string {
+    return text.replace(/^['"]|['"]$/g, '');
+}
+
+/**
+ * 旧塔里成句的复杂道具效果。
+ *
+ * 这些片段没法靠「逐条语句」翻译（里面是函数、循环与提前返回），但它们的意图很明确，
+ * 且在新词汇里都有对应写法，因此逐条改写为数据；只有真正需要命令式逻辑的（炸弹）
+ * 指向塔作者脚本。每一条规则都附上行为变化的提示，不静默改变语义。
+ */
+const ITEM_RULES: ItemRule[] = [
+    {
+        name: '怪物手册',
+        match: (ctx) => /core\.ui\.drawBook\s*\(/.test(ctx.effect),
+        build: () => ({ useItemEffect: [{ type: 'openPanel', panel: 'monsterManual' }] }),
+    },
+    {
+        name: '楼层传送器',
+        match: (ctx) =>
+            /core\.ui\.drawFly\s*\(/.test(ctx.effect) || /canFlyFrom/.test(ctx.condition),
+        build: () => ({
+            useItemEffect: [{ type: 'openPanel', panel: 'floorMap' }],
+            canUseItemEffect: '(!flag:flyNearStair || nearStair()) && floor:canFlyFrom',
+        }),
+    },
+    {
+        name: '冰冻徽章',
+        match: (ctx) => /getBlockId/.test(ctx.effect) && /'lava'/.test(ctx.effect),
+        build: (ctx) => ({
+            canUseItemEffect: "blockId(nextX(), nextY()) == 'lava'",
+            useItemEffect: [
+                { type: 'removeBlock', loc: ['nextX()', 'nextY()'] },
+                { type: 'playSound', name: '打开界面' },
+                { type: 'tip', text: tip(ctx) },
+            ],
+            notes: [REFUND_NOTE],
+        }),
+    },
+    {
+        name: '破墙镐',
+        match: (ctx) =>
+            /pickaxeFourDirections/.test(ctx.effect) || /var canBreak = function/.test(ctx.effect),
+        build: (ctx) => ({
+            canUseItemEffect: "blockAttr(nextX(), nextY(), 'canBreak')",
+            useItemEffect: [
+                { type: 'removeBlock', loc: ['nextX()', 'nextY()'] },
+                { type: 'playSound', name: '破墙镐' },
+                { type: 'tip', text: tip(ctx) },
+            ],
+            notes: [REFUND_NOTE],
+        }),
+    },
+    {
+        name: '破冰镐',
+        match: (ctx) => /'ice'/.test(ctx.effect) || /'ice'/.test(ctx.condition),
+        build: (ctx) => ({
+            canUseItemEffect: "blockId(nextX(), nextY()) == 'ice'",
+            useItemEffect: [
+                { type: 'openDoor', loc: ['nextX()', 'nextY()'] },
+                { type: 'tip', text: tip(ctx) },
+            ],
+        }),
+    },
+    {
+        name: '大黄门钥匙',
+        match: (ctx) => /searchBlock\(\s*['"]yellowDoor['"]\s*\)/.test(ctx.effect),
+        build: (ctx) => ({
+            canUseItemEffect: "blockCount('yellowDoor') > 0",
+            useItemEffect: [
+                { type: 'openDoor', filter: { id: 'yellowDoor' } },
+                { type: 'tip', text: tip(ctx) },
+            ],
+            notes: [
+                '旧写法逐个门插异步动作再 waitAsync，新写法的 openDoor 支持 filter 批量开门且同步完成',
+            ],
+        }),
+    },
+    {
+        name: '炸弹',
+        match: (ctx) => /bombList/.test(ctx.effect) || /var canBomb = function/.test(ctx.effect),
+        build: () => ({
+            canUseItemEffect:
+                "isEnemy(blockId(nextX(), nextY())) && !enemyAttr(blockId(nextX(), nextY()), 'notBomb')",
+            useItemEffect: { script: 'items/bomb' },
+            script: 'items/bomb',
+            notes: [
+                '炸弹是命令式逻辑（扫怪、结算、多方向），已改为塔作者脚本：请自备 project/scripts/items/bomb.ts（示例塔已提供一份）',
+            ],
+        }),
+    },
+    {
+        name: '中心对称飞行器',
+        match: (ctx) => /core\.bigmap\.width\s*-\s*1\s*-\s*core\.getHeroLoc/.test(ctx.effect),
+        build: (ctx) => ({
+            canUseItemEffect:
+                'blockId(mapWidth() - 1 - status:x, mapHeight() - 1 - status:y) == null',
+            useItemEffect: [
+                { type: 'playSound', name: 'centerFly.mp3' },
+                {
+                    type: 'changePos',
+                    loc: ['mapWidth() - 1 - status:x', 'mapHeight() - 1 - status:y'],
+                },
+                { type: 'tip', text: tip(ctx) },
+            ],
+            notes: ['旧写法的 clearMap / drawHero 等重绘交给呈现层，数据里只保留位移'],
+        }),
+    },
+    {
+        name: '上楼器',
+        match: (ctx) => /indexOf\(core\.status\.floorId\)\s*\+\s*1/.test(ctx.effect),
+        build: (ctx) => ({
+            canUseItemEffect:
+                'floorIndex() < floorCount() - 1 && blockId(status:x, status:y, floorIdOffset(1)) == null',
+            useItemEffect: [
+                { type: 'changeFloor', floorId: ':after', loc: ['status:x', 'status:y'] },
+                { type: 'tip', text: tip(ctx) },
+            ],
+        }),
+    },
+    {
+        name: '下楼器',
+        match: (ctx) => /indexOf\(core\.status\.floorId\)\s*-\s*1/.test(ctx.effect),
+        build: (ctx) => ({
+            canUseItemEffect:
+                'floorIndex() > 0 && blockId(status:x, status:y, floorIdOffset(-1)) == null',
+            useItemEffect: [
+                { type: 'changeFloor', floorId: ':before', loc: ['status:x', 'status:y'] },
+                { type: 'tip', text: tip(ctx) },
+            ],
+        }),
+    },
+    {
+        name: '地震卷轴',
+        match: (ctx) =>
+            /removeBlockByIndexes/.test(ctx.effect) || /block\.event\.canBreak/.test(ctx.effect),
+        build: (ctx) => ({
+            canUseItemEffect: "blockCount('canBreak') > 0",
+            useItemEffect: [
+                { type: 'removeBlock', filter: { canBreak: true } },
+                { type: 'playSound', name: '炸弹' },
+                { type: 'tip', text: tip(ctx) },
+            ],
+        }),
+    },
+    {
+        name: '跳跃靴',
+        match: (ctx) => /jumpHero/.test(ctx.effect) && /nextX\(2\)/.test(ctx.effect),
+        build: (ctx) => ({
+            canUseItemEffect:
+                'nextX(2) >= 0 && nextX(2) < mapWidth() && nextY(2) >= 0 && nextY(2) < mapHeight() && blockId(nextX(2), nextY(2)) == null',
+            useItemEffect: [
+                { type: 'playSound', name: '跳跃' },
+                { type: 'jumpHero', loc: ['nextX(2)', 'nextY(2)'] },
+            ],
+            notes: [tip(ctx, '的位移由引擎完成，跳跃动画交给呈现层')],
+        }),
+    },
+    {
+        name: '技能开关',
+        match: (ctx) => /skillValue/.test(ctx.effect) && /getFlag\('skill'/.test(ctx.effect),
+        build: (ctx) => {
+            const value = readVar(ctx.effect, 'skillValue');
+            const need = readVar(ctx.effect, 'skillNeed');
+            const name = readVar(ctx.effect, 'skillName');
+            if (value == null || need == null || name == null) return {};
+            const skillName = unquote(name);
+            return {
+                useItemEffect: [
+                    {
+                        type: 'if',
+                        condition: `flag:skill != ${value}`,
+                        true: [
+                            {
+                                type: 'if',
+                                condition: `status:mana >= ${need}`,
+                                true: [
+                                    { type: 'playSound', name: '打开界面' },
+                                    { type: 'setValue', name: 'flag:skill', value },
+                                    {
+                                        type: 'setValue',
+                                        name: 'flag:skillName',
+                                        value: `'${skillName}'`,
+                                    },
+                                ],
+                                false: [
+                                    { type: 'playSound', name: '操作失败' },
+                                    { type: 'tip', text: '魔力不足，无法开启技能' },
+                                ],
+                            },
+                        ],
+                        false: [
+                            { type: 'setValue', name: 'flag:skill', value: '0' },
+                            { type: 'setValue', name: 'flag:skillName', value: "'无'" },
+                        ],
+                    },
+                ],
+            };
+        },
+    },
+];
+
+/** 按顺序尝试规则；没有匹配的规则时返回 null（交给逐条语句翻译） */
+export function translateKnownItem(ctx: ItemRuleContext): ItemRuleResult | null {
+    for (const rule of ITEM_RULES) {
+        if (rule.match(ctx)) return rule.build(ctx);
+    }
+    return null;
+}
+
+/** 已注册的规则名（供测试与文档核对） */
+export const ITEM_RULE_NAMES: readonly string[] = ITEM_RULES.map((rule) => rule.name);
+
+////// 剧本动作里的旧 JS //////
+
+/** 取出 `function(){...}` / `() => {...}` 的函数体；带返回值或认不出时返回 null */
+export function readFunctionBody(src: string): string | null {
+    const text = stripComments(src).trim();
+    const match = text.match(/^(?:function\s*[\w$]*\s*\([^)]*\)|\(?[\w$,\s]*\)?\s*=>)\s*\{/);
+    if (!match) return null;
+    const bodyStart = text.indexOf('{', match[0].length - 1);
+    const bodyEnd = text.lastIndexOf('}');
+    if (bodyStart < 0 || bodyEnd <= bodyStart) return null;
+    if (text.slice(bodyEnd + 1).replace(/[\s;()]/g, '') !== '') return null;
+    return text.slice(bodyStart + 1, bodyEnd).trim();
+}
+
+/**
+ * 把 `{ "type": "function", "function": "function(){ core.addItem('x'); }" }`
+ * 翻译成等价的剧本动作列表。
+ *
+ * 新引擎不再 `eval` 剧本里的函数字符串，旧塔里这类写法必须逐条翻译；
+ * 只认能静态判定的语句（与效果字段同一套规则），认不出就返回 null 交给人工。
+ */
+export function translateFunctionAction(value: unknown): unknown[] | null {
+    if (typeof value !== 'object' || value === null) return null;
+    const action = value as Record<string, unknown>;
+    if (action.type !== 'function' || typeof action.function !== 'string') return null;
+    const body = readFunctionBody(action.function);
+    if (body == null) return null;
+    const statements = splitStatements(stripComments(body));
+    if (!statements || statements.length === 0) return null;
+    const actions: unknown[] = [];
+    for (const statement of statements) {
+        const result = translateStatement(statement);
+        if ('reason' in result) return null;
+        actions.push(result.action);
+    }
+    return actions;
+}
+
+/** 动作列表里可能嵌套子动作的字段 */
+const NESTED_ACTION_KEYS = ['true', 'false', 'actions', 'data', 'list'] as const;
+
+/**
+ * 递归翻译动作列表里的 `function` 动作（旧塔里 `useItemEvent` / 楼层事件常用）。
+ *
+ * 返回翻译后的新值；整棵树里没有可翻译项时返回 null。
+ */
+export function translateActionsDeep(value: unknown): unknown[] | null {
+    if (!Array.isArray(value)) return null;
+    let changed = false;
+    const output: unknown[] = [];
+    for (const item of value) {
+        const translated = translateFunctionAction(item);
+        if (translated) {
+            output.push(...translated);
+            changed = true;
+            continue;
+        }
+        if (item != null && typeof item === 'object' && !Array.isArray(item)) {
+            const action = { ...(item as Record<string, unknown>) };
+            for (const key of NESTED_ACTION_KEYS) {
+                const nested = translateActionsDeep(action[key]);
+                if (nested) {
+                    action[key] = nested;
+                    changed = true;
+                }
+            }
+            output.push(action);
+            continue;
+        }
+        output.push(item);
+    }
+    return changed ? output : null;
+}

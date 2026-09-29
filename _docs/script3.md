@@ -34,7 +34,10 @@
 | `blockId(x, y, floorId?)` | `core.getBlockId(x, y, floorId)` | 某点图块 id，空格与已移除图块为 `null` |
 | `blockNumber(x, y, floorId?)` | `core.getBlockNumber(...)` | 某点图块编号 |
 | `blockCls(x, y, floorId?)` | `core.getBlock(x,y).event.cls` | 某点图块类别 |
-| `blockCount(idOrCls, floorId?)` | `core.searchBlock('xxx').length` | 按 id 或类别统计数量 |
+| `blockAttr(x, y, 属性名, floorId?)` | `core.getBlock(x,y).event.canBreak` | 某点图块的属性，空格 / 已移除为 `null`（破墙镐条件） |
+| `blockCount(idOrCls, floorId?)` | `core.searchBlock('xxx').length` | 按 id / 类别 / 属性名统计数量（`blockCount('canBreak')` 即「本层可破坏的墙」） |
+| `isEnemy(id)` | `core.material.enemys[id] != null` | 该 id 是否为怪物（炸弹条件） |
+| `enemyAttr(id, 属性名)` | `core.material.enemys[id].notBomb` | 怪物属性（炸弹条件里的免炸标记） |
 | `mapWidth(floorId?)` / `mapHeight(floorId?)` | `core.bigmap.width` / `height` | 地图尺寸 |
 | `floorId()` / `floorIndex(floorId?)` / `floorCount()` | `core.status.floorId` / `core.floorIds` | 楼层信息 |
 | `floorIdOffset(n, floorId?)` | `core.floorIds[index + n]` | 相对楼层 id，越界为 `null` |
@@ -63,6 +66,8 @@
 | 动作 | 说明 |
 | --- | --- |
 | `removeBlock` | 移除图块。`loc` 指定坐标，或 `filter` 批量匹配，如 `{ "type": "removeBlock", "filter": { "canBreak": true } }`（地震卷轴） |
+| `openDoor` | 开门。`loc` 指定坐标，或 `filter` 批量开门，如 `{ "type": "openDoor", "filter": { "id": "yellowDoor" } }`（大黄门钥匙）；`needKey: true` 才会检查并扣 `doorInfo.keys`，与旧引擎一致，剧本里开门默认不扣 |
+| `openPanel` | 打开面板，交给呈现层：`{ "type": "openPanel", "panel": "monsterManual" }`（怪物手册）/ `"floorMap"`（楼层传送）/ `"items"` / `"equips"` |
 | `jumpHero` | 勇士跳跃到 `loc` 或相对位移 `dxy`，位移由引擎完成、动画交给呈现层（跳跃靴） |
 | `triggerDebuff` | 上/解毒衰咒：`{ "type": "triggerDebuff", "action": "remove", "kind": "poison" }` |
 | `changeFloor` | 支持相对楼层：`":before"` / `":after"`（旧写法 `":next"` 同样接受），越界时停在当前层 |
@@ -72,26 +77,23 @@
 
 ### 目录与写法
 
-脚本放在 `project/scripts/` 下，一个文件一个默认导出函数：
+脚本放在 `project/scripts/` 下，一个文件一个默认导出函数（样板塔的 `project/scripts/items/bomb.ts` 就是完整示例）：
 
 ```ts
-/// <reference path="../../mota.d.ts" />
+/// <reference path="../../../mota.d.ts" />
 import type { ItemScript } from 'mota:types';
 
 export default (({ api, itemId }) => {
     const target = api.blockAt(api.nextX(), api.nextY());
-    if (!target || target.event.cls.indexOf('enemy') !== 0) {
-        api.playSound('操作失败');
-        api.addItem(itemId!, 1); // 用不成，退还
-        return;
-    }
+    if (!target) return;
     api.removeBlock(target.x, target.y);
     api.playSound('炸弹');
-    return [{ type: 'tip', text: `${api.itemName(itemId!)}使用成功` }];
+    return [{ type: 'tip', text: `${api.itemName(itemId ?? '')}使用成功` }];
 }) satisfies ItemScript;
 ```
 
 类型声明在仓库根目录的 `mota.d.ts`（`mota:types` 模块），编辑器里能直接补全。
+开发服务器会把 `/project/scripts/**/*.ts` 即时转译成 JS 再送到浏览器，所以脚本直接用 TypeScript 写、无需构建。
 
 ### 在数据里引用
 
@@ -99,7 +101,7 @@ export default (({ api, itemId }) => {
 "bomb": {
     "cls": "tools",
     "name": "炸弹",
-    "canUseItemEffect": "true",
+    "canUseItemEffect": "isEnemy(blockId(nextX(), nextY())) && !enemyAttr(blockId(nextX(), nextY()), 'notBomb')",
     "useItemEffect": { "script": "items/bomb" }
 }
 ```
@@ -129,9 +131,9 @@ export default (({ api, itemId }) => {
 
 | 分类 | 成员 |
 | --- | --- |
-| 只读查询 | `nextX` `nextY` `blockId` `blockNumber` `blockCls` `blockCount` `mapWidth` `mapHeight` `floorIndex` `floorCount` `floorIdOffset` `nearStair` |
+| 只读查询 | `nextX` `nextY` `blockId` `blockNumber` `blockCls` `blockAttr` `blockCount` `mapWidth` `mapHeight` `floorIndex` `floorCount` `floorIdOffset` `nearStair` |
 | 状态 | `hero` `flags` `values` `floorId` `floorIds` `getStatus` `getBuff` `getFlag` `setFlag` `get` `set` |
-| 道具与装备 | `itemName` `enemyName` `itemCount` `hasItem` `addItem` `removeItem` `useItem` `canUseItem` `equip` `unequip` |
+| 道具与装备 | `itemName` `enemyName` `isEnemy` `enemyAttr` `itemCount` `hasItem` `addItem` `removeItem` `useItem` `canUseItem` `equip` `unequip` |
 | 地图 | `blockAt` `searchBlocks` `removeBlock` `setBlock` |
 | 楼层与剧本 | `changeFloor` `runAction` `insertAction` `tip` `playSound` |
 | 界面 | `openPanel('monsterManual' \| 'floorMap' \| 'items' \| 'equips' \| 'help' \| 'statistics')` |
@@ -163,7 +165,29 @@ api.set('item:yellowKey', 2, '-='); // 扣 2 把黄钥匙
 | `core.drawTip('使用成功')` | `{ "type": "tip", "text": "使用成功" }` |
 | `core.insertAction([...])` | 直接写进 `useItemEvent`，或用脚本的 `api.insertAction` |
 
-复杂道具（炸弹、破墙镐、楼层传送器、技能开关、怪物手册/传送面板）建议改写为 `project/scripts/` 下的脚本，或尽量用第二章的内建函数表达。
+复杂道具不会丢给人工了：迁移器内置了一组规则，把旧塔里「成句」的效果（函数、循环、提前返回）逐条改写成新写法。样板塔的 51 个道具现在已全部迁移完，数据里不再有 `core.` 引用，也不再有 `*Legacy` 字段。典型对照：
+
+| 道具 | 旧写法（节选） | 新写法 |
+| --- | --- | --- |
+| 怪物手册 | `core.ui.drawBook(0);` | `{ "type": "openPanel", "panel": "monsterManual" }` |
+| 楼层传送器 | `core.ui.drawFly(...)` / `core.status.maps[floorId].canFlyFrom` | `{ "type": "openPanel", "panel": "floorMap" }` / `(!flag:flyNearStair \|\| nearStair()) && floor:canFlyFrom` |
+| 冰冻徽章 | 判断 `getBlockId(...) == 'lava'` 再 `removeBlock` | 条件 `blockId(nextX(), nextY()) == 'lava'` + `{ "type": "removeBlock", "loc": ["nextX()", "nextY()"] }` |
+| 破墙镐 | `var canBreak = function (x, y) {...}` | 条件 `blockAttr(nextX(), nextY(), 'canBreak')` + 同样的 `removeBlock` |
+| 破冰镐 | `insertAction({type:'openDoor', ...})` | 条件 `blockId(nextX(), nextY()) == 'ice'` + `{ "type": "openDoor", "loc": ["nextX()", "nextY()"] }` |
+| 大黄门钥匙 | `searchBlock("yellowDoor").map(...)` + `waitAsync` | 条件 `blockCount('yellowDoor') > 0` + `{ "type": "openDoor", "filter": { "id": "yellowDoor" } }` |
+| 地震卷轴 | `removeBlockByIndexes` 扫描 `event.canBreak` | 条件 `blockCount('canBreak') > 0` + `{ "type": "removeBlock", "filter": { "canBreak": true } }` |
+| 中心对称飞行器 | `setHeroLoc('x', core.bigmap.width - 1 - ...)` | `{ "type": "changePos", "loc": ["mapWidth() - 1 - status:x", ...] }` |
+| 上楼器 / 下楼器 | `core.floorIds[index ± 1]` + `core.changeFloor` | 条件 `floorIndex() < floorCount() - 1 && blockId(status:x, status:y, floorIdOffset(1)) == null` + `{ "type": "changeFloor", "floorId": ":after", "loc": ["status:x", "status:y"] }` |
+| 跳跃靴 | `insertAction({type:'jumpHero', loc:[nextX(2), nextY(2)]})` | 条件里做边界判断 + `{ "type": "jumpHero", "loc": ["nextX(2)", "nextY(2)"] }` |
+| 技能开关 | 嵌套 `if` + `setFlag` | 用两个嵌套的 `if` 动作表达（`condition` + `true` / `false` 分支） |
+| 生命魔杖 | `{ "type": "function", "function": "function(){core.addItem('lifeWand',1);}" }` | `{ "type": "setValue", "name": "item:lifeWand", "operator": "+=", "value": "1" }` |
+| 炸弹 | `bombList` / `canBomb` / 退还道具 | 条件用 `isEnemy` + `enemyAttr(..., 'notBomb')`，效果指向脚本 `{ "script": "items/bomb" }` |
+
+几点需要留意（迁移时会打印提示）：
+
+- 旧写法习惯把 `canUseItemEffect` 写成 `'true'`、在效果里判断失败后退还道具；新写法改成**条件不满足就不能用**，同样不消耗，提示也更准确；
+- 旧写法的 `waitAsync` / 门动画 / `clearMap` / `drawHero` 这些重绘与动画交给呈现层，数据里只保留状态变化；
+- 真需要命令式逻辑的（扫怪列表、批量结算）才落脚本，例如炸弹。
 
 `project/functions.js` 与 `project/plugins.js` 里是真正的代码（旧引擎用 `eval` 注入），迁移器只做检测、不做转换，需要人工改写成脚本或数据：
 

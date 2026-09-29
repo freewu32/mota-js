@@ -73,6 +73,7 @@ function makeBuiltins(options: { hero?: HeroState; floorId?: string; disabled?: 
         floorIds: ['f1', 'f2'],
         getFloor: (id: string) => floors[id],
         getBlocks,
+        enemys: { slime: { name: '史莱姆', hp: 100, notBomb: true }, bat: { name: '蝙蝠' } },
     };
     const functions = createBuiltins(host);
     const scope: ValueScope = {
@@ -172,6 +173,35 @@ describe('builtins 楼层顺序', () => {
         expect(call('floorIdOffset', 1)).toBe('f2');
         expect(call('floorIdOffset', -1)).toBeNull();
         expect(call('floorIdOffset', 2)).toBeNull();
+        // 显式传 null（越界楼层）不退回当前层，避免读到本层的图块
+        expect(call('blockId', 0, 0, null)).toBeNull();
+        expect(call('blockId', 0, 0)).toBe('upFloor');
+    });
+
+    test('blockAttr 读图块属性（破墙镐条件）', () => {
+        const { call } = makeBuiltins();
+        expect(call('blockAttr', 1, 0, 'canBreak')).toBe(true);
+        expect(call('blockAttr', 0, 0, 'canBreak')).toBeNull();
+        expect(call('blockAttr', 9, 9, 'canBreak')).toBeNull();
+        expect(call('blockAttr', 0, 1, 'canBreak', 'f2')).toBeNull();
+    });
+
+    test('blockCount 支持按属性名统计（地震卷轴条件）', () => {
+        const { call } = makeBuiltins();
+        expect(call('blockCount', 'canBreak')).toBe(1);
+        expect(call('blockCount', 'yellowDoor')).toBe(1);
+        expect(call('blockCount', 'nothing')).toBe(0);
+        // 被禁用的图块不计入
+        expect(makeBuiltins({ disabled: ['1,0'] }).call('blockCount', 'canBreak')).toBe(0);
+    });
+
+    test('isEnemy / enemyAttr 读怪物数据（炸弹条件）', () => {
+        const { call } = makeBuiltins();
+        expect(call('isEnemy', 'slime')).toBe(true);
+        expect(call('isEnemy', 'wall')).toBe(false);
+        expect(call('enemyAttr', 'slime', 'notBomb')).toBe(true);
+        expect(call('enemyAttr', 'bat', 'notBomb')).toBeNull();
+        expect(call('enemyAttr', 'wall', 'name')).toBeNull();
     });
 
     test('resolveFloorId 解析 :now / :before / :after，越界停在当前层', () => {

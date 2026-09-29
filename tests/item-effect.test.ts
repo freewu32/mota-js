@@ -7,6 +7,10 @@ import {
     translateItemActions,
     translateItemCondition,
     translateTipText,
+    ITEM_RULE_NAMES,
+    translateActionsDeep,
+    translateFunctionAction,
+    translateKnownItem,
     unwrapIife,
 } from '../src/shared/data/item-effect';
 
@@ -200,5 +204,192 @@ describe('translateTipText', () => {
         );
         expect(translateTipText('没有插值')).toBe('没有插值');
         expect(translateTipText(undefined)).toBeUndefined();
+    });
+});
+
+describe('translateKnownItem 成句道具规则', () => {
+    /** 从旧塔里摘出的片段，确保规则不会因为措辞差异漏掉 */
+    const snippets: Record<string, { name: string; effect: string; condition?: string }> = {
+        怪物手册: { name: '怪物手册', effect: 'core.ui.drawBook(0);' },
+        楼层传送器: {
+            name: '楼层传送器',
+            effect: 'core.ui.drawFly(core.floorIds.indexOf(core.status.floorId));',
+            condition:
+                '(function () {\n\tif (core.flags.flyNearStair && !core.nearStair()) return false;\n\treturn core.status.maps[core.status.floorId].canFlyFrom;\n})();',
+        },
+        冰冻徽章: {
+            name: '冰冻徽章',
+            effect: "(function () {\n\tif (core.getBlockId(core.nextX(), core.nextY()) == 'lava') {\n\t\tcore.removeBlock(core.nextX(), core.nextY());\n\t}\n})();",
+        },
+        大黄门钥匙: {
+            name: '大黄门钥匙',
+            effect: '(function () {\n\tvar actions = core.searchBlock("yellowDoor").map(function (block) { return 1; });\n})();',
+            condition: "(function () {\n\treturn core.searchBlock('yellowDoor').length > 0;\n})();",
+        },
+        破墙镐: {
+            name: '破墙镐',
+            effect: '(function () {\n\tvar canBreak = function (x, y) {\n\t\treturn core.getBlock(x, y).event.canBreak;\n\t};\n})();',
+        },
+        破冰镐: {
+            name: '破冰镐',
+            effect: '(function () {\n\tcore.insertAction({ "type": "openDoor", "loc": ["core.nextX()", "core.nextY()"] });\n})();',
+            condition:
+                "(function () {\n\treturn core.getBlockId(core.nextX(), core.nextY()) == 'ice';\n})();",
+        },
+        炸弹: {
+            name: '炸弹',
+            effect: '(function () {\n\tvar bombList = [];\n\tvar canBomb = function (x, y) {};\n})();',
+        },
+        中心对称飞行器: {
+            name: '中心对称飞行器',
+            effect: "core.setHeroLoc('x', core.bigmap.width - 1 - core.getHeroLoc('x'));",
+        },
+        上楼器: {
+            name: '上楼器',
+            effect: 'var floorId = core.floorIds[core.floorIds.indexOf(core.status.floorId) + 1];',
+        },
+        下楼器: {
+            name: '下楼器',
+            effect: 'var floorId = core.floorIds[core.floorIds.indexOf(core.status.floorId) - 1];',
+        },
+        地震卷轴: {
+            name: '地震卷轴',
+            effect: '(function () {\n\tcore.removeBlockByIndexes(indexes);\n})();',
+            condition:
+                '(function () {\n\treturn core.status.thisMap.blocks.filter(function (block) {\n\t\treturn !block.disable && block.event.canBreak;\n\t}).length > 0;\n})();',
+        },
+        跳跃靴: {
+            name: '跳跃靴',
+            effect: 'core.playSound("跳跃");\ncore.insertAction({ "type": "jumpHero", "loc": [core.nextX(2), core.nextY(2)] });',
+        },
+        技能开关: {
+            name: '技能：二倍斩',
+            effect: "(function () {\n\tvar skillValue = 1;\n\tvar skillNeed = 5;\n\tvar skillName = '二倍斩';\n\tif (core.getFlag('skill', 0) != skillValue) {}\n})();",
+        },
+    };
+
+    test('规则覆盖 13 个成句道具', () => {
+        expect(ITEM_RULE_NAMES).toHaveLength(13);
+    });
+
+    for (const [rule, snippet] of Object.entries(snippets)) {
+        test(`${rule}：命中规则并产出新写法`, () => {
+            const result = translateKnownItem({
+                id: rule,
+                name: snippet.name,
+                effect: snippet.effect,
+                condition: snippet.condition ?? '',
+            });
+            expect(result).not.toBeNull();
+            expect(result!.useItemEffect ?? result!.canUseItemEffect).toBeDefined();
+        });
+    }
+
+    test('冰冻徽章：条件与效果都改写，提示带上道具名', () => {
+        const result = translateKnownItem({
+            id: 'freezeBadge',
+            name: '冰冻徽章',
+            effect: "if (core.getBlockId(core.nextX(), core.nextY()) == 'lava') {}",
+            condition: '',
+        });
+        expect(result?.canUseItemEffect).toBe("blockId(nextX(), nextY()) == 'lava'");
+        expect(result?.useItemEffect).toEqual([
+            { type: 'removeBlock', loc: ['nextX()', 'nextY()'] },
+            { type: 'playSound', name: '打开界面' },
+            { type: 'tip', text: '冰冻徽章使用成功' },
+        ]);
+        expect(result?.notes?.[0]).toContain('退还道具');
+    });
+
+    test('炸弹：指向塔作者脚本并提示自备', () => {
+        const result = translateKnownItem({
+            id: 'bomb',
+            name: '炸弹',
+            effect: 'var bombList = [];',
+            condition: '',
+        });
+        expect(result?.useItemEffect).toEqual({ script: 'items/bomb' });
+        expect(result?.script).toBe('items/bomb');
+        expect(result?.canUseItemEffect).toContain('enemyAttr');
+    });
+
+    test('技能开关：从旧片段里读出技能值 / 需求 / 名称', () => {
+        const result = translateKnownItem({
+            id: 'skill2',
+            name: '技能：三倍斩',
+            effect: "var skillValue = 2;\nvar skillNeed = 8;\nvar skillName = '三倍斩';\nif (core.getFlag('skill', 0) != skillValue) {}",
+            condition: '',
+        });
+        const actions = result?.useItemEffect as Record<string, unknown>[];
+        expect(actions[0]).toMatchObject({ type: 'if', condition: 'flag:skill != 2' });
+        const nested = (actions[0]!.true as Record<string, unknown>[])[0]!;
+        expect(nested).toMatchObject({ type: 'if', condition: 'status:mana >= 8' });
+        expect(nested.true).toContainEqual({
+            type: 'setValue',
+            name: 'flag:skillName',
+            value: "'三倍斩'",
+        });
+    });
+
+    test('技能开关缺变量时不产出新字段，交回逐条翻译', () => {
+        const result = translateKnownItem({
+            id: 'skill9',
+            name: '技能',
+            effect: "var skillValue = 9;\nif (core.getFlag('skill', 0) != skillValue) {}",
+            condition: '',
+        });
+        expect(result).toEqual({});
+    });
+
+    test('认不出的效果返回 null', () => {
+        expect(
+            translateKnownItem({ id: 'x', name: 'x', effect: 'core.drawTip("hi")', condition: '' }),
+        ).toBeNull();
+    });
+});
+
+describe('translateFunctionAction / translateActionsDeep', () => {
+    test('把 function 动作里的旧 JS 翻译成动作列表', () => {
+        expect(
+            translateFunctionAction({
+                type: 'function',
+                function: "function(){\ncore.addItem('lifeWand', 1);\n}",
+            }),
+        ).toEqual([{ type: 'setValue', name: 'item:lifeWand', operator: '+=', value: '1' }]);
+    });
+
+    test('认不出的函数体返回 null', () => {
+        expect(
+            translateFunctionAction({ type: 'function', function: 'function(){ return 1; }' }),
+        ).toBeNull();
+        expect(
+            translateFunctionAction({ type: 'function', function: 'function(){ core.foo(); }' }),
+        ).toBeNull();
+        expect(translateFunctionAction({ type: 'tip', text: 'hi' })).toBeNull();
+        expect(translateFunctionAction('function(){}')).toBeNull();
+    });
+
+    test('递归翻译嵌套分支里的 function 动作', () => {
+        const actions = [
+            {
+                type: 'if',
+                condition: 'flag:x',
+                true: [{ type: 'function', function: "function(){ core.setFlag('y', 1); }" }],
+                false: [{ type: 'tip', text: 'no' }],
+            },
+        ];
+        expect(translateActionsDeep(actions)).toEqual([
+            {
+                type: 'if',
+                condition: 'flag:x',
+                true: [{ type: 'setValue', name: 'flag:y', value: '1' }],
+                false: [{ type: 'tip', text: 'no' }],
+            },
+        ]);
+    });
+
+    test('没有可翻译项时返回 null（不产生无意义改动）', () => {
+        expect(translateActionsDeep([{ type: 'tip', text: 'hi' }])).toBeNull();
+        expect(translateActionsDeep('不是数组')).toBeNull();
     });
 });

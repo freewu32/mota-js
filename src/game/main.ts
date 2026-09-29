@@ -3,11 +3,16 @@ import { MaterialStore } from '../engine/materials';
 import { drawScene } from '../engine/renderer';
 import { MotaRuntime } from '../engine/runtime';
 import { TILE } from '../engine/tiles';
+import { getSpecialText } from '../engine/modules/enemys';
 import {
     AnimateClock,
     DialogController,
     STATUS_BAR_LABELS,
     createDomDialogView,
+    formatMonsterManual,
+    parseRichText,
+    richTextToPlain,
+    type ManualEntry,
     type StatusBarView,
 } from '../engine/modules/ui';
 
@@ -45,13 +50,98 @@ if (failedScripts.length > 0) {
 const dialogRoot = document.querySelector<HTMLElement>('#dialog');
 if (!dialogRoot) throw new Error('未找到 #dialog 对话框容器');
 const dialogView = createDomDialogView(dialogRoot);
-const dialog = new DialogController(dialogView, { charInterval: 25 });
+const dialog = new DialogController(dialogView, {
+    charInterval: 25,
+    onEffect: (type, data) => {
+        if (type === 'openPanel') openPanel(String(data.panel ?? ''));
+    },
+});
 runtime.setPresenter(dialog);
 // 点击对话框等价于点一下继续
 dialogView.onAdvance = () => {
     dialog.advance();
     renderStatus();
 };
+
+////// 面板 //////
+
+// 旧引擎的面板画在 canvas 上（`core.ui.drawBook` / `drawFly`），新引擎把面板本体交给
+// 呈现层：`openPanel` 动作只上报面板名。这里先把怪物手册接上，楼层传送等待 UI 阶段。
+
+const panelRoot = document.querySelector<HTMLElement>('#panel');
+
+/** 当前层怪物手册条目（旧 `core.ui.drawBook` 的数据部分） */
+function monsterManualEntries(): ManualEntry[] {
+    const grouped = new Map<string, { locs: [number, number][]; damage?: string }>();
+    for (const one of runtime.listEnemies()) {
+        const found = grouped.get(one.id);
+        if (found) found.locs.push([one.x, one.y]);
+        else grouped.set(one.id, { locs: [[one.x, one.y]], damage: one.damage });
+    }
+    const asNumber = (value: unknown): number | undefined =>
+        typeof value === 'number' ? value : undefined;
+    const asText = (value: unknown): string | undefined =>
+        typeof value === 'string' ? value : undefined;
+    const entries: ManualEntry[] = [];
+    for (const [id, { locs, damage }] of grouped) {
+        const enemy = runtime.data.enemys[id];
+        entries.push({
+            id,
+            name: enemy?.name ?? id,
+            hp: enemy?.hp,
+            atk: enemy?.atk,
+            def: enemy?.def,
+            // `mdef` / `description` 不在数据 schema 的必填字段里，按需取用
+            mdef: asNumber(enemy?.mdef),
+            money: enemy?.money,
+            exp: enemy?.exp,
+            damage,
+            specials: enemy ? getSpecialText(enemy) : [],
+            description: asText(enemy?.description),
+            locs,
+        });
+    }
+    return entries;
+}
+
+function closePanel(): void {
+    if (panelRoot) panelRoot.hidden = true;
+}
+
+function openPanel(panel: string): void {
+    if (!panelRoot) return;
+    const box = document.createElement('div');
+    box.className = 'panel-box';
+    const title = document.createElement('h2');
+    if (panel === 'monsterManual') {
+        title.textContent = `怪物手册 - ${runtime.floor.title}`;
+        box.append(title);
+        const entries = monsterManualEntries();
+        const lines = entries.length > 0 ? formatMonsterManual(entries) : ['本层没有怪物。'];
+        for (const line of lines) {
+            const row = document.createElement('div');
+            row.className = 'panel-line';
+            // 富文本标记（`\d` / `\c[]` / `\r[]`）留给后续 UI 阶段，这里先按纯文本展示
+            row.textContent = richTextToPlain(parseRichText(line));
+            box.append(row);
+        }
+    } else {
+        title.textContent = panel;
+        box.append(title);
+        const hint = document.createElement('div');
+        hint.className = 'panel-hint';
+        hint.textContent = '该面板尚未实现（UI 阶段补齐）。';
+        box.append(hint);
+    }
+    const hint = document.createElement('div');
+    hint.className = 'panel-hint';
+    hint.textContent = '点击任意处关闭';
+    box.append(hint);
+    panelRoot.replaceChildren(box);
+    panelRoot.hidden = false;
+}
+
+panelRoot?.addEventListener('click', closePanel);
 
 ////// 状态栏 //////
 

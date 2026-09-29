@@ -258,6 +258,7 @@ export class MotaRuntime {
             floorIds: this.floorIds,
             getFloor: (id) => this.data.floors[id] as FloorData,
             getBlocks: (id) => this.getBlocks(id),
+            enemys: this.data.enemys as Record<string, unknown>,
         });
     }
 

@@ -14,7 +14,7 @@
  * 宿主注入的同名函数优先（如塔自定义的 `rand`）。
  */
 import type { HeroState } from '../types';
-import { activeBlocks, blockAt, type Block } from './maps';
+import { activeBlocks, blockAt, matchesFilter, type Block } from './maps';
 import type { FloorData } from '../../shared/data/schema';
 
 /** 四方向位移（旧 `core.utils.scan`） */
@@ -48,6 +48,8 @@ export interface BuiltinHost {
     floorIds: string[];
     /** 取某层数据 */
     getFloor(floorId: string): FloorData | undefined;
+    /** 怪物数据（供 `enemyAttr` 读取，旧 `core.material.enemys`） */
+    enemys: Record<string, unknown>;
     /** 取某层图块（含禁用图块，内部自行过滤） */
     getBlocks(floorId: string): Block[];
 }
@@ -79,9 +81,16 @@ export function resolveFloorId(
 }
 
 export function createBuiltins(host: BuiltinHost): Record<string, BuiltinFunction> {
-    /** 解析楼层参数并取出楼层数据；楼层不存在时返回 undefined */
-    const floorOf = (floorId?: unknown): FloorData | undefined =>
-        host.getFloor(resolveFloorId(host.floorIds, host.floorId, floorId));
+    /**
+     * 解析楼层参数并取出楼层数据；楼层不存在时返回 undefined。
+     *
+     * 显式传 `null`（如 `floorIdOffset(9)` 越界）一律视为「没有这一层」，
+     * 而不是退回当前层，这样 `blockId(x, y, floorIdOffset(1))` 在顶层也安全。
+     */
+    const floorOf = (floorId?: unknown): FloorData | undefined => {
+        if (floorId === null) return undefined;
+        return host.getFloor(resolveFloorId(host.floorIds, host.floorId, floorId));
+    };
 
     const blockOn = (x: number, y: number, floorId?: unknown): Block | undefined => {
         const floor = floorOf(floorId);
@@ -109,14 +118,30 @@ export function createBuiltins(host: BuiltinHost): Record<string, BuiltinFunctio
         blockCls: (x: unknown, y: unknown, floorId?: unknown) =>
             blockOn(toInt(x), toInt(y), floorId)?.event.cls ?? null,
 
-        // 按 id 或 cls 统计某层图块数量（旧 `core.searchBlock(...).length`）
+        // 某点图块的属性（旧 `core.getBlock(x, y).event.xxx`）
+        blockAttr: (x: unknown, y: unknown, attr: unknown, floorId?: unknown) => {
+            const block = blockOn(toInt(x), toInt(y), floorId);
+            return block?.event[String(attr)] ?? null;
+        },
+
+        // 按 id / cls / 属性名统计某层图块数量（旧 `core.searchBlock(...).length`）
         blockCount: (idOrCls: unknown, floorId?: unknown) => {
             const target = String(idOrCls);
             const floor = floorOf(floorId);
             if (!floor) return 0;
             return activeBlocks(host.getBlocks(floor.floorId)).filter(
-                (block) => block.event.id === target || block.event.cls === target,
+                (block) =>
+                    block.event.id === target ||
+                    block.event.cls === target ||
+                    matchesFilter(block.event, { [target]: true }),
             ).length;
+        },
+
+        // 怪物判定与属性（旧 `block.event.cls.indexOf('enemy') == 0`、`core.material.enemys[id].xxx`）
+        isEnemy: (id: unknown) => host.enemys[String(id)] != null,
+        enemyAttr: (id: unknown, attr: unknown) => {
+            const enemy = host.enemys[String(id)] as Record<string, unknown> | undefined;
+            return enemy?.[String(attr)] ?? null;
         },
 
         // 楼层顺序（旧 `core.floorIds` / `core.status.floorId`）

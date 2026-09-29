@@ -86,7 +86,9 @@ export interface GameApi {
     blockId(x: number, y: number, floorId?: string): string | null;
     blockNumber(x: number, y: number, floorId?: string): number | null;
     blockCls(x: number, y: number, floorId?: string): string | null;
-    /** 按 id 或 cls 统计某层图块数量 */
+    /** 某点图块的属性（如 `canBreak`），空格 / 禁用图块为 null */
+    blockAttr(x: number, y: number, attr: string, floorId?: string): Value;
+    /** 按 id / cls / 属性名统计某层图块数量 */
     blockCount(idOrCls: string, floorId?: string): number;
     mapWidth(floorId?: string): number;
     mapHeight(floorId?: string): number;
@@ -117,6 +119,10 @@ export interface GameApi {
     /* —— 道具与装备 —— */
     itemName(id: string): string;
     enemyName(id: string): string;
+    /** 该 id 是否为怪物（旧 `cls.indexOf('enemy') == 0`） */
+    isEnemy(id: string): boolean;
+    /** 怪物属性（旧 `core.material.enemys[id].xxx`） */
+    enemyAttr(id: string, attr: string): Value;
     itemCount(id: string): number;
     hasItem(id: string): boolean;
     addItem(id: string, count?: number): void;
@@ -167,6 +173,7 @@ export function createGameApi(host: GameApiHost): GameApi {
         floorIds: host.floorIds,
         getFloor: host.getFloor,
         getBlocks: host.getBlocks,
+        enemys: host.enemys,
     });
     const asNumber = (name: string, ...args: unknown[]): number =>
         Number(builtins[name]?.(...args) ?? 0);
@@ -194,6 +201,8 @@ export function createGameApi(host: GameApiHost): GameApi {
         blockNumber: (x, y, floorId) =>
             (builtins.blockNumber!(x, y, floorId) as number | null) ?? null,
         blockCls: (x, y, floorId) => (builtins.blockCls!(x, y, floorId) as string | null) ?? null,
+        blockAttr: (x, y, attr, floorId) =>
+            toValue(builtins.blockAttr!(x, y, attr, floorId) ?? null),
         blockCount: (idOrCls, floorId) => asNumber('blockCount', idOrCls, floorId),
         mapWidth: (floorId?: string) => asNumber('mapWidth', floorId),
         mapHeight: (floorId?: string) => asNumber('mapHeight', floorId),
@@ -229,6 +238,8 @@ export function createGameApi(host: GameApiHost): GameApi {
 
         itemName: (id) => String(host.items[id]?.name ?? id),
         enemyName: (id) => String((host.enemys[id] as { name?: string } | undefined)?.name ?? id),
+        isEnemy: (id) => Boolean(builtins.isEnemy!(id)),
+        enemyAttr: (id, attr) => toValue(builtins.enemyAttr!(id, attr) ?? null),
         itemCount: (id) => itemCount(host.hero, id),
         hasItem: (id) => itemCount(host.hero, id) > 0,
         addItem: (id, count = 1) => host.addItem(id, count),

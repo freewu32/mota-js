@@ -62,10 +62,52 @@ describe('migrate', () => {
         ]);
         expect(items.poisonWine?.canUseItemEffect).toBe('flag:poison');
 
-        // 无法静态转换的效果保留原文并计入报告
-        expect(items.freezeBadge?.useItemEffect).toBeUndefined();
-        expect(typeof items.freezeBadge?.useItemEffectLegacy).toBe('string');
-        expect(result.untranslated.some((one) => one.startsWith('freezeBadge.'))).toBe(true);
-        expect(result.untranslated.some((one) => one.startsWith('book.'))).toBe(true);
+        // 成句的复杂道具由规则逐条改写，示例塔的道具已全部迁移：
+        // 不再有 core 引用、不再有 *Legacy 字段、也没有需人工迁移的字段
+        expect(result.untranslated).toEqual([]);
+        expect(JSON.stringify(items)).not.toContain('core.');
+        expect(JSON.stringify(items)).not.toContain('Legacy');
+        expect(items.book?.useItemEffect).toEqual([{ type: 'openPanel', panel: 'monsterManual' }]);
+        expect(items.freezeBadge?.useItemEffect).toEqual([
+            { type: 'removeBlock', loc: ['nextX()', 'nextY()'] },
+            { type: 'playSound', name: '打开界面' },
+            { type: 'tip', text: '冰冻徽章使用成功' },
+        ]);
+        expect(items.freezeBadge?.canUseItemEffect).toBe("blockId(nextX(), nextY()) == 'lava'");
+        expect(items.bomb?.useItemEffect).toEqual({ script: 'items/bomb' });
+        expect(result.scriptRefs).toEqual(['bomb -> project/scripts/items/bomb.ts']);
+        expect(items.skill1?.useItemEffect).toEqual([
+            {
+                type: 'if',
+                condition: 'flag:skill != 1',
+                true: [
+                    {
+                        type: 'if',
+                        condition: 'status:mana >= 5',
+                        true: [
+                            { type: 'playSound', name: '打开界面' },
+                            { type: 'setValue', name: 'flag:skill', value: '1' },
+                            { type: 'setValue', name: 'flag:skillName', value: "'二倍斩'" },
+                        ],
+                        false: [
+                            { type: 'playSound', name: '操作失败' },
+                            { type: 'tip', text: '魔力不足，无法开启技能' },
+                        ],
+                    },
+                ],
+                false: [
+                    { type: 'setValue', name: 'flag:skill', value: '0' },
+                    { type: 'setValue', name: 'flag:skillName', value: "'无'" },
+                ],
+            },
+        ]);
+        // 旧 `function` 动作字符串逐条翻译（生命魔杖）
+        expect(items.lifeWand?.useItemEvent).toContainEqual({
+            type: 'setValue',
+            name: 'item:lifeWand',
+            operator: '+=',
+            value: '1',
+        });
+        expect(result.notes.length).toBeGreaterThan(0);
     });
 });

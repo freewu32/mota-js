@@ -35,7 +35,19 @@ const server = Bun.serve({
             const rel = decodeURIComponent(url.pathname.slice('/project/'.length));
             try {
                 const file = Bun.file(resolveInRoot(PROJECT_ROOT, rel));
-                if (await file.exists()) return new Response(file);
+                if (await file.exists()) {
+                    // 塔作者脚本用 TypeScript 编写（配 mota.d.ts 的类型），
+                    // 浏览器不认 .ts，这里在开发服务器上转译成 JS 再送出。
+                    if (rel.endsWith('.ts')) {
+                        const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(
+                            await file.text(),
+                        );
+                        return new Response(js, {
+                            headers: { 'content-type': 'application/javascript; charset=utf-8' },
+                        });
+                    }
+                    return new Response(file);
+                }
             } catch {
                 // 路径越界，按未找到处理
             }

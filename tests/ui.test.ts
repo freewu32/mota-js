@@ -300,7 +300,7 @@ describe('怪物手册', () => {
                 locs: [[1, 2]],
             },
         ]);
-        expect(lines[0]).toBe('[#FF6A6A]\\d史莱姆\\d\\r[]');
+        expect(lines[0]).toBe('\r[#FF6A6A]\\d史莱姆\\d\\r[]');
         expect(lines[1]).toBe('生命 100，攻击 20，防御 1，金币 3，经验 2');
         expect(lines[2]).toBe('战斗伤害 先攻 35');
         expect(lines[3]).toBe('特殊属性：先攻、魔攻');
@@ -311,7 +311,7 @@ describe('怪物手册', () => {
 
     test('无特殊属性与数值时给出默认文案', () => {
         const lines = formatMonsterManual([{ id: 'ghost' }]);
-        expect(lines).toEqual(['[#FF6A6A]\\dghost\\d\\r[]', '该怪物无特殊属性。', '']);
+        expect(lines).toEqual(['\r[#FF6A6A]\\dghost\\d\\r[]', '该怪物无特殊属性。', '']);
     });
 });
 

@@ -262,3 +262,15 @@ export function activeBlocks(blocks: readonly Block[]): Block[] {
 export function enemyBlocks(blocks: readonly Block[]): Block[] {
     return activeBlocks(blocks).filter((b) => isEnemy(b.event));
 }
+
+/**
+ * 图块属性过滤（`removeBlock` / `openDoor` 的 `filter` 与 `blockCount` 共用）。
+ *
+ * 值为 `true` 时按「属性为真」匹配（`{ "canBreak": true }`），
+ * 否则按「属性相等」匹配（`{ "id": "yellowDoor" }`）。
+ */
+export function matchesFilter(event: BlockEvent, filter: Record<string, unknown>): boolean {
+    return Object.entries(filter).every(([key, value]) =>
+        value === true ? Boolean(event[key]) : event[key] === value,
+    );
+}

@@ -484,6 +484,51 @@ describe('events 图块与跳跃', () => {
         expect(host.getFloor('f1').floorId).toBe('f1');
         expect([hero.x, hero.y]).toEqual([0, 0]);
     });
+
+    test('openDoor 按 loc 开门且默认不扣钥匙（旧 needKey 缺省）', () => {
+        const { events, hero, host } = makeEvents({
+            hero: newHero({ items: { constants: {}, tools: { yellowKey: 1 }, equips: {} } }),
+        });
+        events.start([{ type: 'openDoor', loc: [1, 1] }]);
+        const door = host.getBlocks('f1').find((b) => b.event.id === 'yellowDoor');
+        expect(door?.disable).toBe(true);
+        expect(itemCount(hero, 'yellowKey')).toBe(1);
+    });
+
+    test('openDoor 带 needKey 时检查并扣除钥匙', () => {
+        const { events, hero, host } = makeEvents({
+            hero: newHero({ items: { constants: {}, tools: { yellowKey: 1 }, equips: {} } }),
+        });
+        events.start([{ type: 'openDoor', loc: [1, 1], needKey: true }]);
+        expect(host.getBlocks('f1').find((b) => b.event.id === 'yellowDoor')?.disable).toBe(true);
+        expect(itemCount(hero, 'yellowKey')).toBe(0);
+    });
+
+    test('openDoor 按 filter 批量开门（大黄门钥匙）', () => {
+        const { events, host } = makeEvents();
+        events.start([{ type: 'openDoor', filter: { id: 'yellowDoor' } }]);
+        expect(host.getBlocks('f1').find((b) => b.event.id === 'yellowDoor')?.disable).toBe(true);
+    });
+
+    test('openDoor 对非门图块无效', () => {
+        const { events, host } = makeEvents();
+        // (2,1) 是楼梯而不是门
+        events.start([{ type: 'openDoor', loc: [2, 1] }]);
+        const stair = host.getBlocks('f1').find((b) => b.x === 2 && b.y === 1);
+        expect(stair?.disable).toBeUndefined();
+    });
+
+    test('openPanel 交给呈现层', () => {
+        const effects: { type: string; data: unknown }[] = [];
+        const presenter: EventPresenter = {
+            effect: (type, data) => effects.push({ type, data: data as unknown }),
+        };
+        const { events } = makeEvents({ presenter });
+        events.start([{ type: 'openPanel', panel: 'monsterManual' }]);
+        expect(effects).toEqual([
+            { type: 'openPanel', data: { type: 'openPanel', panel: 'monsterManual' } },
+        ]);
+    });
 });
 
 describe('events 工具函数', () => {

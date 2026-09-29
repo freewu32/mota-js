@@ -536,8 +536,13 @@
     "name": "怪物手册",
     "text": "可以查看当前楼层各怪物属性",
     "hideInToolbox": true,
-    "canUseItemEffect": "true",
-    "useItemEffectLegacy": "core.ui.drawBook(0);"
+    "useItemEffect": [
+      {
+        "type": "openPanel",
+        "panel": "monsterManual"
+      }
+    ],
+    "canUseItemEffect": "true"
   },
   "fly": {
     "cls": "constants",
@@ -545,8 +550,13 @@
     "text": "可以自由往来去过的楼层",
     "hideInToolbox": true,
     "hideInReplay": true,
-    "useItemEffectLegacy": "core.ui.drawFly(core.floorIds.indexOf(core.status.floorId));",
-    "canUseItemEffectLegacy": "(function () {\n\tif (core.flags.flyNearStair && !core.nearStair()) return false;\n\treturn core.status.maps[core.status.floorId].canFlyFrom;\n})();"
+    "useItemEffect": [
+      {
+        "type": "openPanel",
+        "panel": "floorMap"
+      }
+    ],
+    "canUseItemEffect": "(!flag:flyNearStair || nearStair()) && floor:canFlyFrom"
   },
   "coin": {
     "cls": "constants",
@@ -557,8 +567,24 @@
     "cls": "constants",
     "name": "冰冻徽章",
     "text": "可以将面前的熔岩变成平地",
-    "canUseItemEffect": "true",
-    "useItemEffectLegacy": "(function () {\n\tvar success = false;\n\n\tvar snowFourDirections = false; // 是否多方向雪花；如果是将其改成true\n\tif (snowFourDirections) {\n\t\t// 多方向雪花\n\t\tfor (var direction in core.utils.scan) { // 多方向雪花默认四方向，如需改为八方向请将这两个scan改为scan2\n\t\t\tvar delta = core.utils.scan[direction];\n\t\t\tvar nx = core.getHeroLoc('x') + delta.x,\n\t\t\t\tny = core.getHeroLoc('y') + delta.y;\n\t\t\tif (core.getBlockId(nx, ny) == 'lava') {\n\t\t\t\tcore.removeBlock(nx, ny);\n\t\t\t\tsuccess = true;\n\t\t\t}\n\t\t}\n\t} else {\n\t\tif (core.getBlockId(core.nextX(), core.nextY()) == 'lava') {\n\t\t\tcore.removeBlock(core.nextX(), core.nextY());\n\t\t\tsuccess = true;\n\t\t}\n\t}\n\n\tif (success) {\n\t\tcore.playSound('打开界面');\n\t\tcore.drawTip(core.material.items[itemId].name + '使用成功', itemId);\n\t} else {\n\t\tcore.playSound('操作失败');\n\t\tcore.drawTip(\"当前无法使用\" + core.material.items[itemId].name, itemId);\n\t\tcore.addItem(itemId, 1);\n\t\treturn;\n\t}\n})();"
+    "useItemEffect": [
+      {
+        "type": "removeBlock",
+        "loc": [
+          "nextX()",
+          "nextY()"
+        ]
+      },
+      {
+        "type": "playSound",
+        "name": "打开界面"
+      },
+      {
+        "type": "tip",
+        "text": "冰冻徽章使用成功"
+      }
+    ],
+    "canUseItemEffect": "blockId(nextX(), nextY()) == 'lava'"
   },
   "cross": {
     "cls": "constants",
@@ -600,8 +626,19 @@
       }
     ],
     "itemEffectTip": "，全钥匙+1",
-    "useItemEffectLegacy": "(function () {\n\tvar actions = core.searchBlock(\"yellowDoor\").map(function (block) {\n\t\treturn { \"type\": \"openDoor\", \"loc\": [block.x, block.y], \"async\": true };\n\t});\n\tactions.push({ \"type\": \"waitAsync\" });\n\tactions.push({ \"type\": \"tip\", \"text\": core.material.items[itemId].name + \"使用成功\" });\n\tcore.insertAction(actions);\n})();",
-    "canUseItemEffectLegacy": "(function () {\n\treturn core.searchBlock('yellowDoor').length > 0;\n})();"
+    "useItemEffect": [
+      {
+        "type": "openDoor",
+        "filter": {
+          "id": "yellowDoor"
+        }
+      },
+      {
+        "type": "tip",
+        "text": "大黄门钥匙使用成功"
+      }
+    ],
+    "canUseItemEffect": "blockCount('yellowDoor') > 0"
   },
   "greenKey": {
     "cls": "tools",
@@ -617,50 +654,137 @@
     "cls": "tools",
     "name": "破墙镐",
     "text": "可以破坏勇士面前的墙",
-    "canUseItemEffect": "true",
-    "useItemEffectLegacy": "(function () {\n\tvar canBreak = function (x, y) {\n\t\tvar block = core.getBlock(x, y);\n\t\tif (block == null || block.disable) return false;\n\t\treturn block.event.canBreak;\n\t};\n\n\tvar success = false;\n\tvar pickaxeFourDirections = false; // 是否多方向破；如果是将其改成true\n\tif (pickaxeFourDirections) {\n\t\t// 多方向破\n\t\tfor (var direction in core.utils.scan) { // 多方向破默认四方向，如需改成八方向请将这两个scan改为scan2\n\t\t\tvar delta = core.utils.scan[direction];\n\t\t\tvar nx = core.getHeroLoc('x') + delta.x,\n\t\t\t\tny = core.getHeroLoc('y') + delta.y;\n\t\t\tif (canBreak(nx, ny)) {\n\t\t\t\tcore.removeBlock(nx, ny);\n\t\t\t\tsuccess = true;\n\t\t\t}\n\t\t}\n\t} else {\n\t\t// 仅破当前\n\t\tif (canBreak(core.nextX(), core.nextY())) {\n\t\t\tcore.removeBlock(core.nextX(), core.nextY());\n\t\t\tsuccess = true;\n\t\t}\n\t}\n\n\tif (success) {\n\t\tcore.playSound('破墙镐');\n\t\tcore.drawTip(core.material.items[itemId].name + '使用成功', itemId);\n\t} else {\n\t\t// 无法使用\n\t\tcore.playSound('操作失败');\n\t\tcore.drawTip(\"当前无法使用\" + core.material.items[itemId].name, itemId);\n\t\tcore.addItem(itemId, 1);\n\t\treturn;\n\t}\n})();"
+    "useItemEffect": [
+      {
+        "type": "removeBlock",
+        "loc": [
+          "nextX()",
+          "nextY()"
+        ]
+      },
+      {
+        "type": "playSound",
+        "name": "破墙镐"
+      },
+      {
+        "type": "tip",
+        "text": "破墙镐使用成功"
+      }
+    ],
+    "canUseItemEffect": "blockAttr(nextX(), nextY(), 'canBreak')"
   },
   "icePickaxe": {
     "cls": "tools",
     "name": "破冰镐",
     "text": "可以破坏勇士面前的一堵冰墙",
-    "useItemEffectLegacy": "(function () {\n\tcore.drawTip(core.material.items[itemId].name + '使用成功', itemId);\n\tcore.insertAction({ \"type\": \"openDoor\", \"loc\": [\"core.nextX()\", \"core.nextY()\"] });\n})();",
-    "canUseItemEffectLegacy": "(function () {\n\treturn core.getBlockId(core.nextX(), core.nextY()) == 'ice';\n})();"
+    "useItemEffect": [
+      {
+        "type": "openDoor",
+        "loc": [
+          "nextX()",
+          "nextY()"
+        ]
+      },
+      {
+        "type": "tip",
+        "text": "破冰镐使用成功"
+      }
+    ],
+    "canUseItemEffect": "blockId(nextX(), nextY()) == 'ice'"
   },
   "bomb": {
     "cls": "tools",
     "name": "炸弹",
     "text": "可以炸掉勇士面前的怪物",
-    "canUseItemEffect": "true",
-    "useItemEffectLegacy": "(function () {\n\tvar bombList = []; // 炸掉的怪物坐标列表\n\tvar todo = []; // 炸弹后事件\n\tvar money = 0,\n\t\texp = 0; // 炸弹获得的金币和经验\n\n\tvar canBomb = function (x, y) {\n\t\tvar block = core.getBlock(x, y);\n\t\tif (block == null || block.disable || block.event.cls.indexOf('enemy') != 0) return false;\n\t\tvar enemy = core.material.enemys[block.event.id];\n\t\treturn enemy && !enemy.notBomb;\n\t};\n\n\tvar bomb = function (x, y) {\n\t\tif (!canBomb(x, y)) return;\n\t\tbombList.push([x, y]);\n\t\tvar id = core.getBlockId(x, y),\n\t\t\tenemy = core.material.enemys[id];\n\t\tmoney += core.getEnemyValue(enemy, 'money', x, y) || 0;\n\t\texp += core.getEnemyValue(enemy, 'exp', x, y) || 0;\n\t\tcore.push(todo, core.floors[core.status.floorId].afterBattle[x + \",\" + y]);\n\t\tcore.push(todo, enemy.afterBattle);\n\t\tcore.removeBlock(x, y);\n\t}\n\n\t// 如果要多方向可炸，把这里的false改成true\n\tif (false) {\n\t\tvar scan = core.utils.scan; // 多方向炸时默认四方向，如果要改成八方向炸可以改成 core.utils.scan2\n\t\tfor (var direction in scan) {\n\t\t\tvar delta = scan[direction];\n\t\t\tbomb(core.getHeroLoc('x') + delta.x, core.getHeroLoc('y') + delta.y);\n\t\t}\n\t} else {\n\t\t// 仅炸当前\n\t\tbomb(core.nextX(), core.nextY());\n\t}\n\n\tif (bombList.length == 0) {\n\t\tcore.playSound('操作失败');\n\t\tcore.drawTip('当前无法使用' + core.material.items[itemId].name, itemId);\n\t\tcore.addItem(itemId, 1);\n\t\treturn;\n\t}\n\n\tcore.playSound('炸弹');\n\tcore.drawTip(core.material.items[itemId].name + '使用成功', itemId);\n\n\t// 取消这里的注释可以炸弹后获得金币和经验\n\t// core.status.hero.money += money;\n\t// core.status.hero.exp += exp;\n\n\t// 取消这里的注释可以炸弹引发战后事件\n\t// if (todo.length > 0) core.insertAction(todo);\n\n})();"
+    "useItemEffect": {
+      "script": "items/bomb"
+    },
+    "canUseItemEffect": "isEnemy(blockId(nextX(), nextY())) && !enemyAttr(blockId(nextX(), nextY()), 'notBomb')"
   },
   "centerFly": {
     "cls": "tools",
     "name": "中心对称飞行器",
     "text": "可以飞向当前楼层中心对称的位置",
-    "useItemEffectLegacy": "core.playSound('centerFly.mp3');\ncore.clearMap('hero');\ncore.setHeroLoc('x', core.bigmap.width - 1 - core.getHeroLoc('x'));\ncore.setHeroLoc('y', core.bigmap.height - 1 - core.getHeroLoc('y'));\ncore.drawHero();\ncore.drawTip(core.material.items[itemId].name + '使用成功');",
-    "canUseItemEffectLegacy": "(function () {\n\tvar toX = core.bigmap.width - 1 - core.getHeroLoc('x'),\n\t\ttoY = core.bigmap.height - 1 - core.getHeroLoc('y');\n\tvar id = core.getBlockId(toX, toY);\n\treturn id == null;\n})();"
+    "useItemEffect": [
+      {
+        "type": "playSound",
+        "name": "centerFly.mp3"
+      },
+      {
+        "type": "changePos",
+        "loc": [
+          "mapWidth() - 1 - status:x",
+          "mapHeight() - 1 - status:y"
+        ]
+      },
+      {
+        "type": "tip",
+        "text": "中心对称飞行器使用成功"
+      }
+    ],
+    "canUseItemEffect": "blockId(mapWidth() - 1 - status:x, mapHeight() - 1 - status:y) == null"
   },
   "upFly": {
     "cls": "tools",
     "name": "上楼器",
     "text": "可以飞往楼上的相同位置",
-    "useItemEffectLegacy": "(function () {\n\tvar floorId = core.floorIds[core.floorIds.indexOf(core.status.floorId) + 1];\n\tif (core.status.event.id == 'action') {\n\t\tcore.insertAction([\n\t\t\t{ \"type\": \"changeFloor\", \"loc\": [core.getHeroLoc('x'), core.getHeroLoc('y')], \"floorId\": floorId },\n\t\t\t{ \"type\": \"tip\", \"text\": core.material.items[itemId].name + '使用成功' }\n\t\t]);\n\t} else {\n\t\tcore.changeFloor(floorId, null, core.status.hero.loc, null, function () {\n\t\t\tcore.drawTip(core.material.items[itemId].name + '使用成功');\n\t\t\tcore.replay();\n\t\t});\n\t}\n})();",
-    "canUseItemEffectLegacy": "(function () {\n\tvar floorId = core.status.floorId,\n\t\tindex = core.floorIds.indexOf(floorId);\n\tif (index < core.floorIds.length - 1) {\n\t\tvar toId = core.floorIds[index + 1],\n\t\t\ttoX = core.getHeroLoc('x'),\n\t\t\ttoY = core.getHeroLoc('y');\n\t\tvar mw = core.floors[toId].width,\n\t\t\tmh = core.floors[toId].height;\n\t\tif (toX >= 0 && toX < mw && toY >= 0 && toY < mh && core.getBlock(toX, toY, toId) == null) {\n\t\t\treturn true;\n\t\t}\n\t}\n\treturn false;\n})();"
+    "useItemEffect": [
+      {
+        "type": "changeFloor",
+        "floorId": ":after",
+        "loc": [
+          "status:x",
+          "status:y"
+        ]
+      },
+      {
+        "type": "tip",
+        "text": "上楼器使用成功"
+      }
+    ],
+    "canUseItemEffect": "floorIndex() < floorCount() - 1 && blockId(status:x, status:y, floorIdOffset(1)) == null"
   },
   "downFly": {
     "cls": "tools",
     "name": "下楼器",
     "text": "可以飞往楼下的相同位置",
-    "useItemEffectLegacy": "(function () {\n\tvar floorId = core.floorIds[core.floorIds.indexOf(core.status.floorId) - 1];\n\tif (core.status.event.id == 'action') {\n\t\tcore.insertAction([\n\t\t\t{ \"type\": \"changeFloor\", \"loc\": [core.getHeroLoc('x'), core.getHeroLoc('y')], \"floorId\": floorId },\n\t\t\t{ \"type\": \"tip\", \"text\": core.material.items[itemId].name + '使用成功' }\n\t\t]);\n\t} else {\n\t\tcore.changeFloor(floorId, null, core.status.hero.loc, null, function () {\n\t\t\tcore.drawTip(core.material.items[itemId].name + '使用成功');\n\t\t\tcore.replay();\n\t\t});\n\t}\n})();",
-    "canUseItemEffectLegacy": "(function () {\n\tvar floorId = core.status.floorId,\n\t\tindex = core.floorIds.indexOf(floorId);\n\tif (index > 0) {\n\t\tvar toId = core.floorIds[index - 1],\n\t\t\ttoX = core.getHeroLoc('x'),\n\t\t\ttoY = core.getHeroLoc('y');\n\t\tvar mw = core.floors[toId].width,\n\t\t\tmh = core.floors[toId].height;\n\t\tif (toX >= 0 && toX < mw && toY >= 0 && toY < mh && core.getBlock(toX, toY, toId) == null) {\n\t\t\treturn true;\n\t\t}\n\t}\n\treturn false;\n})();"
+    "useItemEffect": [
+      {
+        "type": "changeFloor",
+        "floorId": ":before",
+        "loc": [
+          "status:x",
+          "status:y"
+        ]
+      },
+      {
+        "type": "tip",
+        "text": "下楼器使用成功"
+      }
+    ],
+    "canUseItemEffect": "floorIndex() > 0 && blockId(status:x, status:y, floorIdOffset(-1)) == null"
   },
   "earthquake": {
     "cls": "tools",
     "name": "地震卷轴",
     "text": "可以破坏当前层的所有墙",
-    "useItemEffectLegacy": "(function () {\n\tvar indexes = [];\n\tfor (var index in core.status.thisMap.blocks) {\n\t\tvar block = core.status.thisMap.blocks[index];\n\t\tif (!block.disable && block.event.canBreak) {\n\t\t\tindexes.push(index);\n\t\t}\n\t}\n\tcore.removeBlockByIndexes(indexes);\n\tcore.redrawMap();\n\tcore.playSound('炸弹');\n\tcore.drawTip(core.material.items[itemId].name + '使用成功');\n})();",
-    "canUseItemEffectLegacy": "(function () {\n\treturn core.status.thisMap.blocks.filter(function (block) {\n\t\treturn !block.disable && block.event.canBreak;\n\t}).length > 0;\n})();"
+    "useItemEffect": [
+      {
+        "type": "removeBlock",
+        "filter": {
+          "canBreak": true
+        }
+      },
+      {
+        "type": "playSound",
+        "name": "炸弹"
+      },
+      {
+        "type": "tip",
+        "text": "地震卷轴使用成功"
+      }
+    ],
+    "canUseItemEffect": "blockCount('canBreak') > 0"
   },
   "poisonWine": {
     "cls": "tools",
@@ -733,8 +857,10 @@
         "text": "先恢复一个魔杖（因为使用道具必须消耗一个）"
       },
       {
-        "type": "function",
-        "function": "function(){\ncore.addItem('lifeWand', 1);\n}"
+        "type": "setValue",
+        "name": "item:lifeWand",
+        "operator": "+=",
+        "value": "1"
       },
       {
         "type": "playSound",
@@ -785,16 +911,77 @@
     "cls": "tools",
     "name": "跳跃靴",
     "text": "能跳跃到前方两格处",
-    "useItemEffectLegacy": "core.playSound(\"跳跃\");\ncore.insertAction({ \"type\": \"jumpHero\", \"loc\": [core.nextX(2), core.nextY(2)] });",
-    "canUseItemEffectLegacy": "(function () {\n\tvar nx = core.nextX(2),\n\t\tny = core.nextY(2);\n\treturn nx >= 0 && nx < core.bigmap.width && ny >= 0 && ny < core.bigmap.height && core.getBlockId(nx, ny) == null;\n})();"
+    "useItemEffect": [
+      {
+        "type": "playSound",
+        "name": "跳跃"
+      },
+      {
+        "type": "jumpHero",
+        "loc": [
+          "nextX(2)",
+          "nextY(2)"
+        ]
+      }
+    ],
+    "canUseItemEffect": "nextX(2) >= 0 && nextX(2) < mapWidth() && nextY(2) >= 0 && nextY(2) < mapHeight() && blockId(nextX(2), nextY(2)) == null"
   },
   "skill1": {
     "cls": "constants",
     "name": "技能：二倍斩",
     "text": "可以打开或关闭主动技能二倍斩",
     "hideInReplay": true,
-    "canUseItemEffect": "true",
-    "useItemEffectLegacy": "(function () {\n\tvar skillValue = 1; // 技能的flag:skill值，可用于当前开启技能的判定；对于新技能可以依次改成2，3等等\n\tvar skillNeed = 5; // 技能的需求\n\tvar skillName = '二倍斩'; // 技能的名称\n\n\tif (core.getFlag('skill', 0) != skillValue) { // 判断当前是否已经开了技能\n\t\tif (core.getStatus('mana') >= skillNeed) { // 这里要写当前能否开技能的条件判断，比如魔力值至少要多少\n\t\t\tcore.playSound('打开界面');\n\t\t\tcore.setFlag('skill', skillValue); // 开技能1\n\t\t\tcore.setFlag('skillName', skillName); // 设置技能名\n\t\t} else {\n\t\t\tcore.playSound('操作失败');\n\t\t\tcore.drawTip('魔力不足，无法开启技能');\n\t\t}\n\t} else { // 关闭技能\n\t\tcore.setFlag('skill', 0); // 关闭技能状态\n\t\tcore.setFlag('skillName', '无');\n\t}\n})();"
+    "useItemEffect": [
+      {
+        "type": "if",
+        "condition": "flag:skill != 1",
+        "true": [
+          {
+            "type": "if",
+            "condition": "status:mana >= 5",
+            "true": [
+              {
+                "type": "playSound",
+                "name": "打开界面"
+              },
+              {
+                "type": "setValue",
+                "name": "flag:skill",
+                "value": "1"
+              },
+              {
+                "type": "setValue",
+                "name": "flag:skillName",
+                "value": "'二倍斩'"
+              }
+            ],
+            "false": [
+              {
+                "type": "playSound",
+                "name": "操作失败"
+              },
+              {
+                "type": "tip",
+                "text": "魔力不足，无法开启技能"
+              }
+            ]
+          }
+        ],
+        "false": [
+          {
+            "type": "setValue",
+            "name": "flag:skill",
+            "value": "0"
+          },
+          {
+            "type": "setValue",
+            "name": "flag:skillName",
+            "value": "'无'"
+          }
+        ]
+      }
+    ],
+    "canUseItemEffect": "true"
   },
   "wand": {
     "cls": "items",

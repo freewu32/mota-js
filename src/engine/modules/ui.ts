@@ -488,7 +488,7 @@ export function formatMonsterManual(entries: readonly ManualEntry[]): string[] {
     const lines: string[] = [];
     for (const entry of entries) {
         const title = entry.name ?? entry.id;
-        lines.push(`[#FF6A6A]\\d${title}\\d\\r[]`);
+        lines.push(`\r[#FF6A6A]\\d${title}\\d\\r[]`);
         const stats: string[] = [];
         if (entry.hp != null) stats.push(`生命 ${formatBigNumber(entry.hp)}`);
         if (entry.atk != null) stats.push(`攻击 ${formatBigNumber(entry.atk)}`);

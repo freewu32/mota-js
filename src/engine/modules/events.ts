@@ -14,7 +14,7 @@
 import type { Direction } from '../types';
 import { MotaControl, addItem, type ControlContext } from './control';
 import { triggerDebuff, type DebuffType } from './status';
-import { blockAt, isDoor, isEnemy, isItem, resolveEvent, type Block } from './maps';
+import { blockAt, isDoor, isEnemy, isItem, matchesFilter, resolveEvent, type Block } from './maps';
 import { createBuiltins, resolveFloorId } from './builtins';
 import {
     applyOperator,
@@ -274,6 +274,7 @@ export class MotaEvents {
             changePos: this.actionChangePos,
             battle: this.actionBattle,
             openDoor: this.actionOpenDoor,
+            openPanel: this.actionOpenPanel,
             trigger: this.actionTrigger,
             insert: this.actionInsert,
             sleep: this.actionSleep,
@@ -337,6 +338,7 @@ export class MotaEvents {
             floorIds: ctx.floorIds ?? [ctx.floorId],
             getFloor: (id) => ctx.getFloor(id),
             getBlocks: (id) => ctx.getBlocks(id),
+            enemys: this.host.enemys,
         });
     }
 
@@ -972,10 +974,7 @@ export class MotaEvents {
             const filter = (data.filter ?? {}) as Record<string, unknown>;
             for (const block of blocks) {
                 if (block.disable) continue;
-                const matched = Object.entries(filter).every(([key, value]) =>
-                    value === true ? truthy(block.event[key]) : block.event[key] === value,
-                );
-                if (matched) block.disable = true;
+                if (matchesFilter(block.event, filter)) block.disable = true;
             }
             return;
         }
@@ -1111,21 +1110,55 @@ export class MotaEvents {
         this.host.presenter.update?.();
     }
 
+    /**
+     * 开门（旧 `core.openDoor` / `core.removeBlock`）。
+     *
+     * - `loc`：指定坐标（支持表达式，如 `["nextX()", "nextY()"]`）；
+     * - `filter`：批量开门，如 `{ "id": "yellowDoor" }`（大黄门钥匙）；
+     * - `needKey`：是否检查并扣除 `doorInfo.keys`。与旧引擎一致，**剧本里的开门默认不扣钥匙**
+     *   （旧 `_action_openDoor` 只在 `data.needKey` 为真时扣），勇士撞门触发的那次才扣。
+     */
     private actionOpenDoor(
         data: ScriptActionObject,
         x: number | null,
         y: number | null,
         prefix: string,
     ): void {
-        const [lx, ly] = this.resolveLoc(data.loc, x, y, prefix);
         const floorId = data.floorId == null ? this.control.ctx.floorId : String(data.floorId);
-        if (floorId !== this.control.ctx.floorId) {
-            const block = blockAt(this.control.ctx.getBlocks(floorId), lx, ly);
-            if (block) block.disable = true;
-            return;
+        const needKey = truthy(data.needKey);
+        const sameFloor = floorId === this.control.ctx.floorId;
+        for (const block of this.matchedDoors(data, x, y, prefix, floorId)) {
+            // 非本层只能标记禁用（本层才谈得上扣钥匙与动画）
+            if (needKey && sameFloor) this.control.openDoor(block);
+            else block.disable = true;
         }
-        const block = this.control.blockAt(lx, ly);
-        if (block && !block.disable && isDoor(block.event)) this.control.openDoor(block);
+    }
+
+    /** 取 `loc` / `filter` 指定的、可开启的门图块 */
+    private matchedDoors(
+        data: ScriptActionObject,
+        x: number | null,
+        y: number | null,
+        prefix: string,
+        floorId: string,
+    ): Block[] {
+        const blocks = this.control.ctx.getBlocks(floorId);
+        const candidates =
+            data.filter != null
+                ? blocks.filter((block) =>
+                      matchesFilter(block.event, data.filter as Record<string, unknown>),
+                  )
+                : this.resolveLoc2D(data.loc, x, y, prefix)
+                      .map(([lx, ly]) => blockAt(blocks, lx, ly))
+                      .filter((block): block is Block => block != null);
+        return candidates.filter((block) => !block.disable && isDoor(block.event));
+    }
+
+    /** 打开面板（怪物手册 / 楼层传送 / 背包…）；面板本体属于呈现层 */
+    private actionOpenPanel(data: ScriptActionObject): void {
+        const panel = data.panel ?? data.name;
+        if (panel == null) return;
+        this.host.presenter.effect?.('openPanel', { ...data, panel: String(panel) });
     }
 
     /** 触发某个点的系统事件（战斗 / 开门 / 拾取 / 剧本） */

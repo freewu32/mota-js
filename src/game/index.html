@@ -119,6 +119,44 @@
             .mota-inline-icon::before {
                 content: '\25a1';
             }
+
+            /* 面板：怪物手册等（旧引擎的 canvas 面板，这里先用 DOM 文本呈现） */
+            #panel {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.6);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10;
+            }
+            #panel[hidden] {
+                display: none;
+            }
+            .panel-box {
+                width: min(560px, 92vw);
+                max-height: 80vh;
+                overflow: auto;
+                background: #1b1d23;
+                border: 2px solid var(--border);
+                border-radius: 8px;
+                padding: 14px 18px;
+                box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+            }
+            .panel-box h2 {
+                margin: 0 0 8px;
+                font-size: 16px;
+                color: #ffd479;
+            }
+            .panel-box .panel-line {
+                line-height: 1.6;
+                white-space: pre-wrap;
+            }
+            .panel-box .panel-hint {
+                margin-top: 10px;
+                color: #9aa0ad;
+                font-size: 13px;
+            }
         </style>
     </head>
     <body>
@@ -133,6 +171,7 @@
         </div>
         <canvas id="game" width="416" height="416"></canvas>
         <div id="dialog" hidden></div>
+        <div id="panel" hidden></div>
         <script type="module" src="./main.ts"></script>
     </body>
 </html>
