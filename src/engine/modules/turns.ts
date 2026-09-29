@@ -11,10 +11,24 @@
  *   自行记录（与旧实现一致，脚本直接调用也会记）；
  * - `equip:` / `unEquip:` 由本分发器记录，因为换装的底层 API 不负责录像。
  */
+import type { MoveResult } from './control';
 import type { Direction } from '../types';
 
 /** 处理器返回 true 表示已消费该 token */
 export type TurnHandler = (token: string) => boolean;
+
+/**
+ * 一次回合的附加结果，供特效 / 音效层使用。
+ * 引擎不依赖任何呈现实现，只把发生过的动作广播出去。
+ */
+export interface TurnOutcome {
+    /** 触发的录像 token */
+    token: string;
+    /** `direction` 处理器产生的移动结果（含战斗伤害） */
+    move?: MoveResult;
+}
+
+export type TurnOutcomeListener = (outcome: TurnOutcome) => void;
 
 export interface TurnHandlerEntry {
     name: string;
@@ -25,7 +39,7 @@ export interface TurnHandlerEntry {
 
 /** 分发器需要的宿主能力，由 `runtime.ts` 注入 */
 export interface TurnHost {
-    move(dx: number, dy: number): unknown;
+    move(dx: number, dy: number): MoveResult | unknown;
     /** 缺省方向表示顺时针转 90 度 */
     turn(direction?: Direction): unknown;
     canUseItem(id: string): boolean;
@@ -59,6 +73,8 @@ function parseNumber(token: string, prefixLength: number): number | null {
  */
 export class TurnDispatcher {
     private readonly handlers: TurnHandlerEntry[] = [];
+    /** 回合结果监听（特效 / 音效层挂在这里，可多个） */
+    private readonly listeners = new Set<TurnOutcomeListener>();
 
     constructor(private readonly host: TurnHost) {
         this.register('direction', (token) => this.onDirection(token));
@@ -86,6 +102,22 @@ export class TurnDispatcher {
 
     has(name: string): boolean {
         return this.handlers.some((one) => one.name === name);
+    }
+
+    /** 订阅回合结果，返回取消订阅函数 */
+    onOutcome(listener: TurnOutcomeListener): () => void {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    }
+
+    private emit(outcome: TurnOutcome): void {
+        for (const listener of [...this.listeners]) {
+            try {
+                listener(outcome);
+            } catch (error) {
+                console.error('回合结果监听出错：', error);
+            }
+        }
     }
 
     /** 已注册处理器名（调试用） */
@@ -118,7 +150,8 @@ export class TurnDispatcher {
     private onDirection(token: string): boolean {
         const delta = DIRECTIONS[token];
         if (!delta) return false;
-        this.host.move(delta[0], delta[1]);
+        const move = this.host.move(delta[0], delta[1]);
+        this.emit({ token, move: move as MoveResult });
         return true;
     }
 
@@ -138,7 +171,9 @@ export class TurnDispatcher {
         if (!token.startsWith('item:')) return false;
         const id = token.slice(5);
         if (!id || !this.host.canUseItem(id)) return false;
-        return this.host.useItem(id);
+        const used = this.host.useItem(id);
+        if (used) this.emit({ token });
+        return used;
     }
 
     private onEquip(token: string): boolean {
@@ -146,6 +181,7 @@ export class TurnDispatcher {
         const id = token.slice(6);
         if (!id || !this.host.equip(id)) return false;
         this.host.record(token);
+        this.emit({ token });
         return true;
     }
 
@@ -154,6 +190,7 @@ export class TurnDispatcher {
         const type = parseNumber(token, 8);
         if (type == null || !this.host.unequip(type)) return false;
         this.host.record(`unEquip:${type}`);
+        this.emit({ token });
         return true;
     }
 
@@ -162,6 +199,7 @@ export class TurnDispatcher {
         const index = parseNumber(token, 10);
         if (index == null) return false;
         this.host.saveLoadout(index);
+        this.emit({ token });
         return true;
     }
 
@@ -169,13 +207,17 @@ export class TurnDispatcher {
         if (!token.startsWith('loadEquip:')) return false;
         const index = parseNumber(token, 10);
         if (index == null) return false;
-        return this.host.loadLoadout(index);
+        if (!this.host.loadLoadout(index)) return false;
+        this.emit({ token });
+        return true;
     }
 
     private onFly(token: string): boolean {
         if (!token.startsWith('fly:')) return false;
         const floorId = token.slice(4);
-        return floorId.length > 0 && this.host.changeFloorTo(floorId);
+        if (floorId.length === 0 || !this.host.changeFloorTo(floorId)) return false;
+        this.emit({ token });
+        return true;
     }
 }
 

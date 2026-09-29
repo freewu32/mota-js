@@ -7,6 +7,12 @@ settings:
 importers:
     .:
         dependencies:
+            '@preact/signals':
+                specifier: ^2.11.2
+                version: 2.11.2(preact@10.29.8)
+            preact:
+                specifier: ^10.29.8
+                version: 10.29.8
             zod:
                 specifier: ^4.0.0
                 version: 4.6.5
@@ -155,6 +161,20 @@ packages:
             {
                 integrity: sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA==,
             }
+
+    '@preact/signals-core@1.14.4':
+        resolution:
+            {
+                integrity: sha512-HNB6HYeYKhQbJ1aKl+YRjrS4+QWHLKX6qKoUsfS/m0vqzsVaEBiZiaKbG/e+NKk2ch5ALQr/ihWaMHxiCuuWHA==,
+            }
+
+    '@preact/signals@2.11.2':
+        resolution:
+            {
+                integrity: sha512-rVTRTt/T0HIRgbugwS5FigbfF/kfdEFYFtiqxa+lbpqTajepqnR0firuAS2iNdHyejWB7Yc9p9QePkVNBtTAwg==,
+            }
+        peerDependencies:
+            preact: '>= 10.25.0 || >=11.0.0-0'
 
     '@types/bun@1.4.2':
         resolution:
@@ -646,6 +666,17 @@ packages:
             }
         engines: { node: '>=12' }
 
+    preact@10.29.8:
+        resolution:
+            {
+                integrity: sha512-ej2aVZ+vZ8WO7tvlQWRM9N63A0KzF9q4mWJfDUHgYaIofWY9hu74QdnQrjoPMmZi2/nZ5gN0bJCQF49xQqx09Q==,
+            }
+        peerDependencies:
+            preact-render-to-string: '>=5'
+        peerDependenciesMeta:
+            preact-render-to-string:
+                optional: true
+
     prelude-ls@1.2.1:
         resolution:
             {
@@ -841,6 +872,13 @@ snapshots:
             keyv: 5.6.0
 
     '@keyv/serialize@1.1.1': {}
+
+    '@preact/signals-core@1.14.4': {}
+
+    '@preact/signals@2.11.2(preact@10.29.8)':
+        dependencies:
+            '@preact/signals-core': 1.14.4
+            preact: 10.29.8
 
     '@types/bun@1.4.2':
         dependencies:
@@ -1158,6 +1196,8 @@ snapshots:
     path-key@3.1.1: {}
 
     picomatch@4.0.7: {}
+
+    preact@10.29.8: {}
 
     prelude-ls@1.2.1: {}
 

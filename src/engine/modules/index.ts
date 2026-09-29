@@ -7,4 +7,5 @@ export * from './values';
 export * from './events';
 export * from './actions';
 export * from './turns';
+export * from './floor-events';
 export * from './ui';

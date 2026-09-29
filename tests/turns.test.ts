@@ -270,6 +270,7 @@ describe('运行时面板数据', () => {
 
     test('楼层传送后标记为已到达并写进存档', () => {
         const rt = new MotaRuntime(data, null);
+        rt.start(); // 开局：初始层视为一次抵达
         rt.visitFloor('f2');
         rt.flyTo('f2');
         expect(rt.hasVisited('f2')).toBe(true);

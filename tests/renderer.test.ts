@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { drawScene, resolveElement, type TilePainter } from '../src/engine/renderer';
+import { drawHeroSprite, drawScene, resolveElement, type TilePainter } from '../src/engine/renderer';
 import type { FloorData } from '../src/shared/data/schema';
 
 /** 记录被调用的 canvas 方法名的假上下文 */
@@ -97,5 +97,31 @@ describe('drawScene', () => {
             id: 'redPotion',
         });
         expect(resolveElement({}, 0)).toBeUndefined();
+    });
+});
+
+describe('drawHeroSprite', () => {
+    test('按朝向取行、走路时按帧循环取列', () => {
+        const calls: unknown[][] = [];
+        const ctx = {
+            drawImage: (...args: unknown[]) => void calls.push(args),
+        } as unknown as CanvasRenderingContext2D;
+        const icons = {
+            width: 32,
+            height: 48,
+            down: { loc: 0, stop: 0, leftFoot: 1, rightFoot: 3 },
+            left: { loc: 1, stop: 0, leftFoot: 1, rightFoot: 3 },
+        };
+        expect(drawHeroSprite(ctx, {} as CanvasImageSource, icons, { x: 0, y: 0, direction: 'down' })).toBe(true);
+        expect(calls[0]).toEqual([{}, 0, 0, 32, 48, 0, -16, 32, 48]);
+
+        // 走路：帧 1 → leftFoot 列
+        calls.length = 0;
+        drawHeroSprite(ctx, {} as CanvasImageSource, icons, { x: 1, y: 2, direction: 'left' }, 1, true);
+        expect(calls[0]).toEqual([{}, 1 * 32, 1 * 48, 32, 48, 1 * 32, 2 * 32 + 32 - 48, 32, 48]);
+
+        // 没有该朝向 → 不绘制
+        expect(drawHeroSprite(ctx, {} as CanvasImageSource, icons, { x: 0, y: 0, direction: 'up' })).toBe(false);
+        expect(drawHeroSprite(ctx, {} as CanvasImageSource, undefined, { x: 0, y: 0 })).toBe(false);
     });
 });

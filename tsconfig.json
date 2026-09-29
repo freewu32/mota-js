@@ -13,6 +13,8 @@
         "resolveJsonModule": true,
         "forceConsistentCasingInFileNames": true,
         "skipLibCheck": true,
+        "jsx": "react-jsx",
+        "jsxImportSource": "preact",
         "noEmit": true
     },
     "include": ["src", "server", "scripts", "tests", "project/scripts", "mota.d.ts"]

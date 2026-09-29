@@ -1,0 +1,364 @@
+/*
+ * mota-js 3.0 设计系统（游戏端与编辑器共用）。
+ *
+ * 配色 / 字体走 CSS 变量（塔作者可用主题覆盖），窗口皮肤走九宫格 border-image
+ * （旧 ui._drawWindowSkin 的等价物）。所有类名统一 `mota-` 前缀，避免与
+ * 塔作者自定义 DOM 冲突。
+ */
+
+:root {
+    --mota-font: system-ui, 'Microsoft YaHei', sans-serif;
+    --mota-text: #eeeeee;
+    --mota-bg: #111111;
+    --mota-panel: #1b1d23;
+    --mota-panel-border: #4a4e59;
+    --mota-title: #ffd479;
+    --mota-accent: #9ad9ff;
+    --mota-highlight: #ffd479;
+    --mota-muted: #9aa0ad;
+    --mota-entry: #262932;
+    --mota-skin: none;
+    --mota-skin-slice: 16;
+}
+
+.mota-button {
+    padding: 6px 14px;
+    font: inherit;
+    color: var(--mota-text);
+    background: var(--mota-entry);
+    border: 1px solid var(--mota-panel-border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.mota-button:hover:not(:disabled) {
+    border-color: var(--mota-highlight);
+}
+
+.mota-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.mota-input {
+    padding: 6px 8px;
+    font: inherit;
+    color: inherit;
+    background: var(--mota-entry);
+    border: 1px solid var(--mota-panel-border);
+    border-radius: 6px;
+}
+
+.mota-muted {
+    color: var(--mota-muted);
+}
+
+/* ---------- 状态栏 ---------- */
+
+.mota-status {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    background: var(--mota-panel);
+    border: 1px solid var(--mota-panel-border);
+    border-radius: 6px;
+}
+
+.mota-status-slots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    font-size: 14px;
+}
+
+.mota-status-slot {
+    display: flex;
+    gap: 4px;
+    align-items: baseline;
+}
+
+.mota-status-label {
+    color: var(--mota-muted);
+    font-size: 12px;
+}
+
+.mota-status-value {
+    font-weight: 600;
+    min-width: 1.6em;
+}
+
+.mota-status-counters {
+    margin-top: 6px;
+    font-size: 13px;
+    color: #cfd4de;
+}
+
+/* ---------- 对话框 / 提示 ---------- */
+
+.mota-dialog-layer {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    width: min(560px, 92vw);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 20;
+    pointer-events: none;
+}
+
+.mota-dialog {
+    pointer-events: auto;
+    background: color-mix(in srgb, var(--mota-panel) 94%, transparent);
+    border: 2px solid var(--mota-panel-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    line-height: 1.6;
+    box-shadow: 0 8px 28px rgb(0 0 0 / 50%);
+}
+
+.mota-dialog.is-clickable {
+    cursor: pointer;
+}
+
+.mota-dialog-title {
+    font-weight: 700;
+    color: var(--mota-title);
+    margin-bottom: 4px;
+}
+
+.mota-dialog-text {
+    white-space: pre-wrap;
+    min-height: 1.6em;
+}
+
+.mota-dialog-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.mota-dialog-choices .mota-button {
+    text-align: left;
+}
+
+.mota-dialog-hint {
+    color: var(--mota-muted);
+    font-size: 13px;
+}
+
+.mota-tip {
+    pointer-events: auto;
+    align-self: center;
+    background: color-mix(in srgb, var(--mota-panel) 96%, transparent);
+    border: 1px solid var(--mota-accent);
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: var(--mota-accent);
+    font-size: 13px;
+    animation: mota-tip-fade 1.6s ease-out 1.8s forwards;
+}
+
+@keyframes mota-tip-fade {
+    to {
+        opacity: 0;
+    }
+}
+
+/* ---------- 面板 ---------- */
+
+.mota-panel-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgb(0 0 0 / 60%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+}
+
+.mota-panel {
+    width: min(620px, 92vw);
+    max-height: 82vh;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    background: var(--mota-panel);
+    border: 1px solid var(--mota-panel-border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    box-shadow: 0 8px 28px rgb(0 0 0 / 60%);
+    color: var(--mota-text);
+}
+
+html[data-skin] .mota-panel,
+html[data-skin] .mota-dialog,
+html[data-skin] .mota-start-box {
+    border: var(--mota-skin-width, 16px) solid transparent;
+    border-image-source: var(--mota-skin);
+    border-image-slice: var(--mota-skin-slice) fill;
+    border-image-repeat: repeat;
+    border-radius: 0;
+    image-rendering: pixelated;
+}
+
+.mota-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.mota-panel-title {
+    margin: 0;
+    font-size: 16px;
+    color: var(--mota-title);
+}
+
+.mota-close {
+    background: none;
+    border: none;
+    color: var(--mota-muted);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.mota-panel-body {
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px 0;
+}
+
+.mota-panel-foot {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--mota-panel-border);
+    color: var(--mota-muted);
+    font-size: 13px;
+}
+
+.mota-section {
+    margin-top: 6px;
+    color: var(--mota-title);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.mota-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 6px;
+}
+
+.mota-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    background: var(--mota-entry);
+    border: 1px solid var(--mota-panel-border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.mota-entry:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.mota-entry.is-current {
+    border-color: var(--mota-highlight);
+}
+
+.mota-entry-icon {
+    width: 32px;
+    height: 32px;
+    flex: none;
+    image-rendering: pixelated;
+}
+
+.mota-entry-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mota-entry-count {
+    color: var(--mota-muted);
+    font-size: 12px;
+}
+
+.mota-line {
+    line-height: 1.6;
+    white-space: pre-wrap;
+}
+
+.mota-inline-icon {
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.12em;
+    image-rendering: pixelated;
+}
+
+.mota-views {
+    display: flex;
+    gap: 8px;
+    overflow: auto;
+}
+
+.mota-view-map {
+    flex: none;
+    image-rendering: pixelated;
+    background: #000;
+    border: 1px solid var(--mota-panel-border);
+}
+
+/* ---------- 移动端虚拟键盘 ---------- */
+
+.mota-mobile-pad {
+    display: grid;
+    grid-template-columns: repeat(3, 56px);
+    grid-template-rows: repeat(3, 56px);
+    gap: 6px;
+    justify-content: center;
+    touch-action: none;
+}
+
+.mota-pad-button {
+    font: inherit;
+    font-size: 18px;
+    color: var(--mota-text);
+    background: var(--mota-entry);
+    border: 1px solid var(--mota-panel-border);
+    border-radius: 8px;
+    user-select: none;
+}
+
+.mota-pad-button:active {
+    border-color: var(--mota-highlight);
+}
+
+.mota-pad-up {
+    grid-area: 1 / 2;
+}
+.mota-pad-left {
+    grid-area: 2 / 1;
+}
+.mota-pad-ok {
+    grid-area: 2 / 2;
+}
+.mota-pad-right {
+    grid-area: 2 / 3;
+}
+.mota-pad-down {
+    grid-area: 3 / 2;
+}

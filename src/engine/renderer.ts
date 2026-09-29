@@ -16,6 +16,20 @@ export interface HeroPos {
     y: number;
 }
 
+/** `icons.hero` 的形态：朝向 → 帧序号，外加精灵尺寸 */
+export interface HeroIcons {
+    width?: number;
+    height?: number;
+    [direction: string]: unknown;
+}
+
+interface HeroDirectionMeta {
+    loc?: number;
+    stop?: number;
+    leftFoot?: number;
+    rightFoot?: number;
+}
+
 /** 渲染器依赖的图块绘制能力（由 MaterialStore 实现，测试可传入桩） */
 export interface TilePainter {
     drawElement(
@@ -51,6 +65,8 @@ export function drawScene(
     hero: HeroPos,
     materials?: TilePainter,
     animate = 0,
+    /** 是否画勇士（有精灵图时由调用方关掉内置圆点） */
+    drawHero = true,
 ): void {
     const rows = floor.map;
 
@@ -84,8 +100,47 @@ export function drawScene(
         }
     }
 
+    if (!drawHero) return;
     ctx.fillStyle = '#ffd700';
     ctx.beginPath();
     ctx.arc(hero.x * TILE + TILE / 2, hero.y * TILE + TILE / 2, TILE * 0.35, 0, Math.PI * 2);
     ctx.fill();
+}
+
+/**
+ * 绘制勇士精灵（`project/images/<firstData.hero.image>`）。
+ *
+ * 图集布局同旧引擎（`control._drawHero_draw`）：列 = 帧序号，行 = 朝向的 `loc`，
+ * 帧序号由 `icons.hero[朝向]` 给出（`stop` / `leftFoot` / `rightFoot`）。
+ * 没有图标表时退回 `stop` 帧。
+ */
+export function drawHeroSprite(
+    ctx: CanvasRenderingContext2D,
+    image: CanvasImageSource,
+    icons: HeroIcons | undefined,
+    hero: HeroPos & { direction?: string },
+    frame = 0,
+    /** 是否在走路（走路时循环左右脚，否则用 stop 帧） */
+    walking = false,
+): boolean {
+    if (!icons) return false;
+    const meta = icons[hero.direction ?? 'down'] as HeroDirectionMeta | undefined;
+    if (!meta) return false;
+    const width = icons.width ?? TILE;
+    const height = icons.height ?? TILE;
+    const stop = meta.stop ?? 0;
+    const cycle = [stop, meta.leftFoot ?? stop, stop, meta.rightFoot ?? stop];
+    const column = walking ? cycle[Math.abs(Math.floor(frame)) % cycle.length]! : stop;
+    ctx.drawImage(
+        image,
+        column * width,
+        (meta.loc ?? 0) * height,
+        width,
+        height,
+        hero.x * TILE + (TILE - width) / 2,
+        hero.y * TILE + TILE - height,
+        width,
+        height,
+    );
+    return true;
 }

@@ -1,0 +1,141 @@
+/*
+ * 游戏页面的布局：状态栏 + 工具栏 + 地图舞台（#game / #fx 叠放）+ 对话层。
+ * 组件本身的样式在 `src/ui/styles.css`（游戏端与编辑器共用）。
+ */
+
+html,
+body {
+    margin: 0;
+    height: 100%;
+    background: var(--mota-bg);
+    color: var(--mota-text);
+    font-family: var(--mota-font);
+}
+
+#app {
+    min-height: 100%;
+}
+
+.mota-app {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px 16px;
+}
+
+.mota-header {
+    width: 100%;
+    max-width: 640px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 14px;
+}
+
+.mota-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--mota-title);
+}
+
+.mota-status,
+.mota-toolbar,
+.mota-stage {
+    width: 100%;
+    max-width: 640px;
+}
+
+.mota-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.mota-stage {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    touch-action: none;
+}
+
+.mota-map {
+    display: block;
+    image-rendering: pixelated;
+    background: #000;
+    max-width: 100%;
+    height: auto;
+}
+
+.mota-fx {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    pointer-events: none;
+    image-rendering: pixelated;
+    max-width: 100%;
+}
+
+/* ---------- 开始界面 ---------- */
+
+.mota-start {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgb(0 0 0 / 70%);
+    backdrop-filter: blur(2px);
+}
+
+.mota-start-box {
+    min-width: min(420px, 90vw);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 28px 32px;
+    background: var(--mota-panel);
+    border: 2px solid var(--mota-panel-border);
+    border-radius: 10px;
+    box-shadow: 0 12px 40px rgb(0 0 0 / 60%);
+}
+
+.mota-start-title {
+    margin: 0;
+    font-size: 24px;
+    color: var(--mota-title);
+}
+
+.mota-start-version {
+    color: var(--mota-muted);
+    font-size: 12px;
+}
+
+.mota-start-levels,
+.mota-start-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.mota-button.is-selected {
+    border-color: var(--mota-highlight);
+    color: var(--mota-highlight);
+}
+
+/* ---------- 移动端 ---------- */
+
+@media (max-width: 719px), (pointer: coarse) {
+    .mota-toolbar .mota-button {
+        padding: 6px 10px;
+        font-size: 13px;
+    }
+
+    .mota-dialog-layer {
+        bottom: 12px;
+    }
+}

@@ -17,6 +17,10 @@ import {
 import { RouteRecorder, decodeRoute, encodeRoute, routeCodecFor } from './modules/actions';
 import { MotaControl, type ControlContext, type MoveResult } from './modules/control';
 import { MotaItems } from './modules/items';
+import {
+    FloorEvents,
+    type PositionEventType,
+} from './modules/floor-events';
 import { createTurnDispatcher, type TurnDispatcher } from './modules/turns';
 import {
     MotaEvents,
@@ -37,7 +41,13 @@ import {
     type StatusBarView,
     type ToolboxPanelView,
 } from './modules/ui';
-import { applyOperator, evaluateValue, writeValue, type ValueScope } from './modules/values';
+import {
+    applyOperator,
+    evaluateCondition,
+    evaluateValue,
+    writeValue,
+    type ValueScope,
+} from './modules/values';
 import type { Direction, GameState, HeroState, RuntimeData, SaveData } from './types';
 
 export interface StorageLike {
@@ -126,6 +136,8 @@ export class MotaRuntime {
     readonly route = new RouteRecorder();
     /** 塔作者脚本注册表（开局前用 `loadScripts` 预加载） */
     readonly scripts = new ScriptRegistry();
+    /** 楼层生命周期事件（firstArrive / eachArrive / autoEvent / afterBattle…） */
+    readonly floorEvents: FloorEvents;
     private readonly storage: StorageLike | null;
     private readonly control: MotaControl;
     private readonly globals: Record<string, unknown> = {};
@@ -194,6 +206,25 @@ export class MotaRuntime {
             // 剧本换层要让运行时的楼层状态一起走，否则 `runtime.floor` / 存档会落后
             changeFloor: (floorId, loc, direction) =>
                 this.applyFloorChange(floorId, loc, direction),
+            // 剧本发起的战斗 / 拾取，同样要跑楼层的位置事件
+            onAfterBattle: (_enemyId, x, y) => this.floorEvents.after('afterBattle', x, y),
+            onAfterGetItem: (_itemId, x, y) => this.floorEvents.after('afterGetItem', x, y),
+            // autoEvent 执行完清理「执行中」标记（旧 `eventdata.autoEvent` 的收尾函数）
+            actions: {
+                autoEventReset: (data) => {
+                    this.floorEvents.clearExecuting(String(data.symbol ?? ''));
+                },
+            },
+        });
+        this.floorEvents = new FloorEvents({
+            floorIds: this.floorIds,
+            floorId: () => this.state.floorId,
+            getFloor: (id) => this.data.floors[id] as Record<string, unknown> | undefined,
+            insert: (actions, x, y) => this.events.insert(actions, x, y),
+            evaluate: (condition, prefix) =>
+                evaluateCondition(condition, this.valueScope(prefix), prefix),
+            getFlag: (name, fallback) => this.getFlag(name, fallback),
+            setFlag: (name, value) => this.setFlag(name, value),
         });
         this.turns = createTurnDispatcher({
             move: (dx, dy) => this.move(dx, dy),
@@ -207,22 +238,57 @@ export class MotaRuntime {
             changeFloorTo: (floorId) => this.flyTo(floorId),
             record: (token) => this.route.record(token),
         });
-        // 初始楼层视为已到达（旧 `afterChangeFloor` 首次抵达时 `visitFloor`）
-        this.visitFloor(this.state.floorId);
     }
 
     /**
-     * 应用剧本 / 脚本发起的换层：同时更新控制上下文与运行时状态。
-     *
-     * 旧的 `core.changeFloor` 还负责背景音乐、过场动画与 `firstArrive` 剧本，
-     * 这些属于呈现层，留到游戏入口阶段补。
+     * 开局：把初始楼层当作一次抵达（旧 `startGame` → `changeFloor`），
+     * 触发 `eachArrive` / `firstArrive` 与呈现层的换层通知。
+     */
+    start(): void {
+        this.applyFloorChange(this.state.floorId, null, null, 'start');
+    }
+
+    /** 每帧驱动：检查自动事件（旧 `core.checkAutoEvents`） */
+    update(): void {
+        this.floorEvents.checkAutoEvents();
+    }
+
+    private getFlag(name: string, fallback: unknown = null): unknown {
+        return this.state.flags[name] ?? fallback;
+    }
+
+    private setFlag(name: string, value: unknown): void {
+        this.state.flags[name] = value;
+    }
+
+    /**
+     * 抵达楼层：触发 `eachArrive` / `firstArrive` 剧本，并通知呈现层
+     * （背景音乐 / 天气 / 画面色调 / 过场动画由游戏入口接管）。
+     */
+    private arrive(floorId: string, from: string | null, reason: string): void {
+        const first = !this.hasVisited(floorId);
+        this.visitFloor(floorId);
+        this.floorEvents.arrive(floorId, first);
+        this.events.host.presenter.effect?.('changeFloor', {
+            floorId,
+            from,
+            first,
+            reason,
+        });
+    }
+
+    /**
+     * 应用剧本 / 脚本发起的换层：同时更新控制上下文与运行时状态，
+     * 并触发抵达事件与呈现层通知。
      */
     private applyFloorChange(
         floorId: string | null,
         loc: [number, number] | null,
         direction: string | null,
+        reason = 'script',
     ): void {
         const ctx = this.control.ctx;
+        const from = this.state.floorId;
         if (floorId) {
             ctx.floorId = floorId;
             this.state.floorId = floorId;
@@ -232,7 +298,7 @@ export class MotaRuntime {
             ctx.hero.y = loc[1];
         }
         if (direction) ctx.hero.direction = direction as Direction;
-        this.visitFloor(this.state.floorId);
+        this.arrive(this.state.floorId, from, reason);
     }
 
     /** 替换事件呈现器（如接入 DOM 状态栏 / 对话框） */
@@ -472,15 +538,35 @@ export class MotaRuntime {
         }
 
         const result = this.control.move(dx, dy);
-        // control 内可能切换楼层，这里同步回运行时状态
-        this.state.floorId = this.control.ctx.floorId;
-        this.visitFloor(this.state.floorId);
+        // control 内可能切换楼层，这里同步回运行时状态并触发抵达事件
+        const current = this.control.ctx.floorId;
+        if (current !== this.state.floorId) {
+            const from = this.state.floorId;
+            this.state.floorId = current;
+            this.arrive(current, from, 'move');
+        } else {
+            this.visitFloor(current);
+            this.runPositionEvent(result);
+        }
         if (result.moved) this.state.hero.steps += 1;
         // 旧引擎对每次移动尝试都记录方向（含被挡住的情况）
         this.route.record(this.control.ctx.hero.direction);
         // 即捡即用类道具的提示（旧 `drawTip(getItemEffectTip())`）
         if (result.tip) this.events.host.presenter.tip?.(result.tip);
         return result;
+    }
+
+    /** 战斗 / 拾取 / 开门后执行楼层的位置事件（旧 `afterBattle` 等） */
+    private runPositionEvent(result: MoveResult): void {
+        const type: PositionEventType | null =
+            result.action === 'battle'
+                ? 'afterBattle'
+                : result.action === 'item'
+                  ? 'afterGetItem'
+                  : result.action === 'door'
+                    ? 'afterOpenDoor'
+                    : null;
+        if (type) this.floorEvents.after(type, result.x, result.y);
     }
 
     /**
@@ -586,7 +672,7 @@ export class MotaRuntime {
             Array.isArray(point) && point.length === 2
                 ? ([Number(point[0]), Number(point[1])] as [number, number])
                 : null;
-        this.applyFloorChange(floorId, loc, null);
+        this.applyFloorChange(floorId, loc, null, 'fly');
         return true;
     }
 
@@ -617,6 +703,14 @@ export class MotaRuntime {
             this.control.ctx.hero = this.state.hero;
             this.control.ctx.floorId = this.state.floorId;
             this.control.ctx.flags = this.state.flags;
+            // 读档不重跑 firstArrive / eachArrive（旧 `__fromLoad__` 分支），
+            // 但要让呈现层把 BGM / 天气 / 色调切到读档后的楼层
+            this.events.host.presenter.effect?.('changeFloor', {
+                floorId: this.state.floorId,
+                from: null,
+                first: false,
+                reason: 'load',
+            });
             return true;
         } catch {
             return false;
