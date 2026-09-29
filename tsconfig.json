@@ -15,5 +15,5 @@
         "skipLibCheck": true,
         "noEmit": true
     },
-    "include": ["src", "server", "scripts", "tests"]
+    "include": ["src", "server", "scripts", "tests", "mota.d.ts"]
 }

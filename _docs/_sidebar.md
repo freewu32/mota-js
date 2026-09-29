@@ -5,6 +5,7 @@
 - [事件指令](instruction)
 - [个性化](personalization)
 - [脚本](script)
+- [3.0 脚本与数据 API](script3)
 - [修改编辑器](editor)
 - [UI编辑器](ui-editor)
 - [附录：API列表](api)

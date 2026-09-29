@@ -12,6 +12,7 @@
  * - `itemEffectTip` / `useItemTip`：拾取 / 使用提示文本（支持 `${表达式}`）。
  */
 import type { ScriptAction } from './events';
+import { isScriptRef } from './scripts';
 import type { HeroState } from '../types';
 import {
     addItem as bagAddItem,
@@ -52,6 +53,11 @@ export interface ItemsHost {
     values: Record<string, unknown>;
     /** 装备槽名（旧 `globalAttribute.equipName`） */
     equipName?: string[];
+    /**
+     * 展开 `{ script: '名字' }` 形式的效果：调用塔作者脚本并取其返回的动作。
+     * 缺省时脚本引用视为无效果（并报错）。
+     */
+    expandScript?(name: string, context: { itemId: string; trigger: 'pickUp' | 'use' }): ItemScript;
     /** 交给剧本解释器执行效果脚本 */
     runScript(actions: ItemScript): void;
     /** 表达式求值作用域 */
@@ -139,10 +145,28 @@ export class MotaItems {
      * 效果
      * ------------------------------------------------------------------ */
 
-    private runEffect(script: unknown, times = 1): void {
+    /**
+     * 执行效果。
+     *
+     * 效果既可以是剧本动作列表（数据驱动），也可以是 `{ script: '名字' }`
+     * 引用塔作者脚本（脚本仅兜底）；脚本返回的动作同样由剧本解释器执行。
+     */
+    private runEffect(
+        script: unknown,
+        times = 1,
+        context?: { itemId: string; trigger: 'pickUp' | 'use' },
+    ): void {
         if (script == null) return;
         try {
-            for (let i = 0; i < times; i += 1) this.host.runScript(script as ItemScript);
+            let actions = script as ItemScript;
+            if (isScriptRef(script)) {
+                if (!context || !this.host.expandScript) {
+                    console.error(`脚本 ${script.script} 缺少执行上下文，已跳过`);
+                    return;
+                }
+                actions = this.host.expandScript(script.script, context);
+            }
+            for (let i = 0; i < times; i += 1) this.host.runScript(actions);
         } catch (error) {
             console.error('道具效果执行失败：', error);
         }
@@ -156,10 +180,10 @@ export class MotaItems {
         const item = this.item(id);
         if (itemCls(item) !== 'items') return false;
         const before = this.hero.hp;
-        this.runEffect(item?.itemEffect, count);
+        this.runEffect(item?.itemEffect, count, { itemId: id, trigger: 'pickUp' });
         const statistics = this.hero.statistics;
         if (statistics) statistics.hp += this.hero.hp - before;
-        this.runEffect(item?.useItemEvent);
+        this.runEffect(item?.useItemEvent, 1, { itemId: id, trigger: 'pickUp' });
         return true;
     }
 
@@ -192,8 +216,8 @@ export class MotaItems {
     use(id: string, noRoute = false): boolean {
         if (!this.canUse(id)) return false;
         const item = this.item(id);
-        this.runEffect(item?.useItemEffect);
-        this.runEffect(item?.useItemEvent);
+        this.runEffect(item?.useItemEffect, 1, { itemId: id, trigger: 'use' });
+        this.runEffect(item?.useItemEvent, 1, { itemId: id, trigger: 'use' });
         if (itemCls(item) === 'tools') this.remove(id, 1);
         if (!noRoute) this.host.record?.(`item:${id}`);
         return true;

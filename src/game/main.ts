@@ -30,6 +30,16 @@ materials.buildAutotileEdges(autotileNumbers);
 
 const runtime = new MotaRuntime(data);
 
+////// 塔作者脚本 //////
+
+// 脚本由宿主加载：数据里写 { script: 'items/bomb' }，这里用动态 import 取模块。
+// 引擎本身不做 IO，因此这段加载逻辑留在游戏入口。
+runtime.setScriptLoader(async (name) => import(/* @vite-ignore */ `/project/scripts/${name}.ts`));
+const failedScripts = await runtime.loadScripts();
+if (failedScripts.length > 0) {
+    console.error(`以下脚本加载失败，相关道具/事件会退化为无效果：${failedScripts.join('、')}`);
+}
+
 ////// 对话 / 提示 //////
 
 const dialogRoot = document.querySelector<HTMLElement>('#dialog');

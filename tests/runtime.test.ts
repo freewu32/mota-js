@@ -58,6 +58,12 @@ const data: RuntimeData = {
             useItemEffect: [{ type: 'setValue', name: 'status:hp', operator: '+=', value: '500' }],
         },
         sword1: { cls: 'equips', name: '铁剑', equip: { type: 0, value: { atk: 10 } } },
+        bomb: {
+            cls: 'tools',
+            name: '炸弹',
+            canUseItemEffect: 'true',
+            useItemEffect: { script: 'items/bomb' },
+        },
     },
     icons: {},
     floors: {
@@ -191,17 +197,16 @@ describe('MotaRuntime', () => {
     test('api 暴露移动、存档与道具操作', () => {
         const storage = memStorage();
         const rt = new MotaRuntime(data, storage);
-        expect(Object.keys(rt.api).sort()).toEqual([
-            'addItem',
-            'equip',
-            'getState',
-            'hasItem',
-            'load',
-            'move',
-            'save',
-            'unequip',
-            'useItem',
-        ]);
+        // api 即塔作者脚本 API（只读查询 + 写操作），外加宿主调试用的几个方法
+        const keys = Object.keys(rt.api);
+        expect(keys).toContain('nextX');
+        expect(keys).toContain('blockId');
+        expect(keys).toContain('insertAction');
+        expect(keys).toContain('openPanel');
+        expect(keys.sort()).toEqual([...keys].sort());
+        for (const name of ['move', 'save', 'load', 'getState', 'useItem', 'equip'] as const) {
+            expect(keys).toContain(name);
+        }
         rt.api.move(-1, 0);
         expect(rt.api.getState().hero.x).toBe(0);
     });
@@ -383,5 +388,78 @@ describe('MotaRuntime', () => {
         expect(rt.items.canUse('poisonWine')).toBe(true);
         expect(rt.items.use('poisonWine')).toBe(true);
         expect(rt.state.flags.poison).toBe(false);
+    });
+});
+
+describe('MotaRuntime 塔作者脚本', () => {
+    test('{ script } 效果调用已注册的脚本', () => {
+        const rt = new MotaRuntime(data, null);
+        const contexts: string[] = [];
+        rt.scripts.register('items/bomb', ({ api, itemId, trigger }) => {
+            contexts.push(`${itemId}:${trigger}`);
+            api.setFlag('bombed', api.blockId(api.nextX(), api.nextY()) ?? '空');
+            return [{ type: 'tip', text: `${api.itemName(itemId ?? '')}使用成功` }];
+        });
+        rt.items.add('bomb', 1);
+        expect(rt.items.use('bomb')).toBe(true);
+        expect(contexts).toEqual(['bomb:use']);
+        // 勇士在 (1,0) 朝下，前方 (1,1) 是空地
+        expect(rt.state.flags['bombed']).toBe('空');
+        // 工具类道具用掉一个
+        expect(rt.items.count('bomb')).toBe(0);
+    });
+
+    test('未注册的脚本不会中断回合', () => {
+        const rt = new MotaRuntime(data, null);
+        rt.items.add('bomb', 1);
+        expect(rt.items.use('bomb')).toBe(true);
+        expect(rt.runScript('items/none')).toEqual([]);
+    });
+
+    test('runScript 提供 api 与上下文，返回动作列表', () => {
+        const rt = new MotaRuntime(data, null);
+        rt.scripts.register('items/skill', ({ api, args }) => {
+            api.set('flag:skill', args?.[0] ?? 0);
+            return [{ type: 'tip', text: '技能已开启' }];
+        });
+        expect(rt.runScript('items/skill', { args: [2] })).toEqual([
+            { type: 'tip', text: '技能已开启' },
+        ]);
+        expect(rt.state.flags['skill']).toBe(2);
+    });
+
+    test('loadScripts 从数据收集脚本引用并加载', async () => {
+        const rt = new MotaRuntime(data, null);
+        const requested: string[] = [];
+        rt.setScriptLoader((name) => {
+            requested.push(name);
+            return { default: () => [] };
+        });
+        expect(await rt.loadScripts()).toEqual([]);
+        expect(requested).toEqual(['items/bomb']);
+        expect(rt.scripts.has('items/bomb')).toBe(true);
+    });
+
+    test('loadScripts 未注入加载器时返回缺失名单', async () => {
+        const rt = new MotaRuntime(data, null);
+        expect(await rt.loadScripts()).toEqual(['items/bomb']);
+        expect(await rt.loadScripts(['items/bomb', 'items/x'])).toEqual(['items/bomb', 'items/x']);
+    });
+
+    test('gameApi 可读写状态、注入动作并换层', () => {
+        const rt = new MotaRuntime(data, null);
+        const api = rt.gameApi;
+        expect(api.blockId(0, 0)).toBe('yellowKey');
+        expect(api.floorIdOffset(1)).toBe('f2');
+        api.set('status:hp', 30, '+=');
+        expect(rt.state.hero.hp).toBe(130);
+        const tips: string[] = [];
+        rt.setPresenter({ tip: (text) => tips.push(text) });
+        api.insertAction([{ type: 'tip', text: '排队' }]);
+        // 当前没有事件在跑，插入的动作立即执行
+        expect(tips).toEqual(['排队']);
+        api.changeFloor(':after', [0, 0]);
+        expect(rt.state.floorId).toBe('f2');
+        expect([rt.state.hero.x, rt.state.hero.y]).toEqual([0, 0]);
     });
 });

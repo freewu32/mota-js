@@ -67,7 +67,7 @@ export interface EventPresenter {
     wait?(done: () => void): void;
     sleep?(ms: number, done: () => void): void;
     /** 其余视觉 / 音频 / UI 动作的落点，由 ui.ts 阶段实现 */
-    effect?(type: string, data: ScriptActionObject): void;
+    effect?(type: string, data: ScriptActionObject | Record<string, unknown>): void;
     update?(): void;
 }
 
