@@ -21,6 +21,7 @@ const maps: Maps = {
     '11': { cls: 'items', id: 'yellowKey' },
     '12': { cls: 'animates', id: 'yellowDoor', doorInfo: { keys: { yellowKey: 1 } } },
     '20': { cls: 'enemys', id: 'slime' },
+    '13': { cls: 'animates', id: 'breakableWall', canBreak: true },
 };
 
 const floors: Record<string, FloorData> = {
@@ -42,7 +43,7 @@ const floors: Record<string, FloorData> = {
         map: [
             [0, 0, 0],
             [0, 0, 0],
-            [0, 0, 0],
+            [13, 0, 0],
         ],
     },
 };
@@ -100,6 +101,7 @@ function makeEvents(
         },
         hero,
         floorId: 'f1',
+        floorIds: ['f1', 'f2'],
         getFloor: (id) => floors[id],
         getBlocks: (id) => {
             cache[id] ??= extractBlocks(floors[id], maps, {
@@ -417,6 +419,70 @@ describe('events 交互与扩展', () => {
         const { events } = makeEvents({ presenter });
         events.start([{ type: 'setCurtain', color: [0, 0, 0], time: 100 }]);
         expect(effects).toEqual(['setCurtain']);
+    });
+});
+
+describe('events 图块与跳跃', () => {
+    test('removeBlock 按 loc 表达式移除前方图块', () => {
+        const { events, host, hero } = makeEvents();
+        hero.direction = 'down';
+        // f2 的 (0,2) 是可破坏墙：站在 (0,1) 朝下，前方正是它
+        events.start([{ type: 'changeFloor', floorId: 'f2', loc: [0, 1] }]);
+        events.start([{ type: 'removeBlock', loc: ['nextX()', 'nextY()'] }]);
+        const block = host.getBlocks('f2').find((b) => b.event.id === 'breakableWall');
+        expect(block?.disable).toBe(true);
+    });
+
+    test('removeBlock 按 filter 批量移除可破坏图块', () => {
+        const { events, host } = makeEvents();
+        events.start([{ type: 'changeFloor', floorId: 'f2', loc: [1, 1] }]);
+        events.start([{ type: 'removeBlock', filter: { canBreak: true } }]);
+        const broken = host.getBlocks('f2').find((b) => b.event.id === 'breakableWall');
+        expect(broken?.disable).toBe(true);
+        // 不带 filter 的形态不影响其他图块
+        expect(host.getBlocks('f2').filter((b) => !b.disable)).toHaveLength(0);
+    });
+
+    test('jumpHero 支持 dxy 相对位移并转发动画', () => {
+        const effects: { type: string; data: unknown }[] = [];
+        const presenter: EventPresenter = {
+            effect: (type, data) => effects.push({ type, data: data as unknown }),
+        };
+        const { events, hero } = makeEvents({ presenter });
+        hero.direction = 'down';
+        events.start([{ type: 'jumpHero', dxy: [1, 2], time: 300 }]);
+        expect([hero.x, hero.y]).toEqual([1, 2]);
+        expect(effects[0]?.type).toBe('jumpHero');
+        expect(effects[0]?.data).toMatchObject({ from: [0, 0], to: [1, 2], time: 300 });
+    });
+
+    test('jumpHero 支持 loc 表达式', () => {
+        const { events, hero } = makeEvents();
+        hero.direction = 'right';
+        events.start([{ type: 'jumpHero', loc: ['nextX(2)', 'nextY(2)'] }]);
+        expect([hero.x, hero.y]).toEqual([2, 0]);
+    });
+
+    test('changeFloor 支持 :before / :after 相对楼层', () => {
+        const { events, hero, host } = makeEvents();
+        events.start([{ type: 'changeFloor', floorId: ':after', loc: [2, 2] }]);
+        expect(host.getFloor('f2').floorId).toBe('f2');
+        expect([hero.x, hero.y]).toEqual([2, 2]);
+        // f2 的上一层是 f1
+        events.start([{ type: 'changeFloor', floorId: ':before', loc: [1, 0] }]);
+        expect(host.getFloor('f1').floorId).toBe('f1');
+        expect([hero.x, hero.y]).toEqual([1, 0]);
+        // f1 再往上不存在：停在当前层（旧实现回退当前层，坐标照常生效）
+        events.start([{ type: 'changeFloor', floorId: ':before', loc: [2, 1] }]);
+        expect(host.getFloor('f1').floorId).toBe('f1');
+        expect([hero.x, hero.y]).toEqual([2, 1]);
+    });
+
+    test('changeFloor 指向不存在的楼层时整条动作作废', () => {
+        const { events, hero, host } = makeEvents();
+        events.start([{ type: 'changeFloor', floorId: 'f9', loc: [2, 2] }]);
+        expect(host.getFloor('f1').floorId).toBe('f1');
+        expect([hero.x, hero.y]).toEqual([0, 0]);
     });
 });
 

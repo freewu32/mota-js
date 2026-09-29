@@ -15,6 +15,7 @@ import type { Direction } from '../types';
 import { MotaControl, addItem, type ControlContext } from './control';
 import { triggerDebuff, type DebuffType } from './status';
 import { blockAt, isDoor, isEnemy, isItem, resolveEvent, type Block } from './maps';
+import { createBuiltins, resolveFloorId } from './builtins';
 import {
     applyOperator,
     evaluateCondition,
@@ -267,6 +268,8 @@ export class MotaEvents {
             setBlock: this.actionSetBlock,
             hide: this.actionHide,
             show: this.actionShow,
+            removeBlock: this.actionRemoveBlock,
+            jumpHero: this.actionJumpHero,
             changeFloor: this.actionChangeFloor,
             changePos: this.actionChangePos,
             battle: this.actionBattle,
@@ -316,11 +319,25 @@ export class MotaEvents {
             hero: ctx.hero,
             enemys: this.host.enemys,
             prefix: this.prefixFor(targetFloor),
-            functions: this.host.functions,
+            // 内建函数（nextX / blockId(x,y) / floorIdOffset …）在前，塔作者注入的优先
+            functions: { ...this.builtins(targetFloor), ...this.host.functions },
             getBlock: (x, y) => blockAt(ctx.getBlocks(targetFloor), x, y),
-            // 楼层属性（旧 `core.status.thisMap`，如 ratio 倍率）
+            // SAFETY: 楼层数据本就是按名字取值的字典，`floor:属性` 只读查表，
+            // 不会写入未知字段。
             floor: ctx.getFloor(targetFloor) as unknown as Record<string, unknown>,
         };
+    }
+
+    /** 值块内建函数（旧 core 的 nextX / getBlockId / bigmap / nearStair 等） */
+    private builtins(floorId: string): Record<string, (...args: unknown[]) => unknown> {
+        const ctx = this.control.ctx;
+        return createBuiltins({
+            hero: ctx.hero,
+            floorId,
+            floorIds: ctx.floorIds ?? [ctx.floorId],
+            getFloor: (id) => ctx.getFloor(id),
+            getBlocks: (id) => ctx.getBlocks(id),
+        });
     }
 
     private prefixFor(
@@ -937,6 +954,69 @@ export class MotaEvents {
         }
     }
 
+    /**
+     * 移除图块（旧 `core.removeBlock` / `core.removeBlockByIndexes`）。
+     *
+     * - `loc`：指定坐标（支持表达式，如 `["nextX()", "nextY()"]`）；
+     * - `filter`：按图块属性批量移除，如 `{ "canBreak": true }`（地震卷轴）。
+     */
+    private actionRemoveBlock(
+        data: ScriptActionObject,
+        x: number | null,
+        y: number | null,
+        prefix: string,
+    ): void {
+        const floorId = data.floorId == null ? this.control.ctx.floorId : String(data.floorId);
+        const blocks = this.control.ctx.getBlocks(floorId);
+        if (data.filter != null) {
+            const filter = (data.filter ?? {}) as Record<string, unknown>;
+            for (const block of blocks) {
+                if (block.disable) continue;
+                const matched = Object.entries(filter).every(([key, value]) =>
+                    value === true ? truthy(block.event[key]) : block.event[key] === value,
+                );
+                if (matched) block.disable = true;
+            }
+            return;
+        }
+        for (const [lx, ly] of this.resolveLoc2D(data.loc, x, y, prefix)) {
+            const block = blockAt(blocks, lx, ly);
+            if (block) block.disable = true;
+        }
+    }
+
+    /**
+     * 勇士跳跃到指定位置（旧 `core.jumpHero`）：忽略途中阻挡，动画交给呈现层。
+     * 支持 `loc` 绝对坐标与 `dxy` 相对位移。
+     */
+    private actionJumpHero(
+        data: ScriptActionObject,
+        _x: number | null,
+        _y: number | null,
+        prefix: string,
+    ): void {
+        const hero = this.control.ctx.hero;
+        const from: [number, number] = [hero.x, hero.y];
+        let to: [number, number];
+        if (Array.isArray(data.dxy)) {
+            const scope = this.scope();
+            to = [
+                hero.x + this.evalCoord((data.dxy as unknown[])[0], scope, prefix),
+                hero.y + this.evalCoord((data.dxy as unknown[])[1], scope, prefix),
+            ];
+        } else {
+            to = this.resolveHeroLoc(data.loc, prefix);
+        }
+        hero.x = to[0];
+        hero.y = to[1];
+        this.host.presenter.effect?.('jumpHero', {
+            ...data,
+            from,
+            to,
+            time: data.time ?? 500,
+        });
+    }
+
     /* ---------------- 楼层与勇士 ---------------- */
 
     private changeFloorTo(
@@ -944,6 +1024,11 @@ export class MotaEvents {
         loc: [number, number] | null,
         direction: string | null,
     ): void {
+        // 与旧 `_changeFloor_getInfo` 一致：楼层不存在时整条动作作废（连坐标也不改）
+        if (floorId != null && !this.control.ctx.getFloor(floorId)) {
+            console.error(`不存在的楼层：${floorId}`);
+            return;
+        }
         if (this.host.changeFloor) {
             this.host.changeFloor(floorId, loc, direction);
             return;
@@ -966,10 +1051,22 @@ export class MotaEvents {
     ): void {
         const loc = this.resolveHeroLoc(data.loc, prefix);
         this.changeFloorTo(
-            data.floorId == null ? null : String(data.floorId),
+            this.resolveFloorRef(data.floorId),
             loc,
             data.direction == null ? null : String(data.direction),
         );
+    }
+
+    /**
+     * 解析楼层引用：`:now` / `:before` / `:after`（`:next` 同 `:after`）相对当前层，
+     * 其余按楼层 id 原样返回；取不到时返回 null（保持原地）。
+     */
+    private resolveFloorRef(value: unknown): string | null {
+        if (value == null) return null;
+        const ctx = this.control.ctx;
+        const floorIds = ctx.floorIds ?? [ctx.floorId];
+        const resolved = resolveFloorId(floorIds, this.floorId ?? ctx.floorId, String(value));
+        return resolved;
     }
 
     private actionChangePos(

@@ -1,4 +1,5 @@
 import type { FloorData } from '../shared/data/schema';
+import { createBuiltins } from './modules/builtins';
 import { RouteRecorder, decodeRoute, encodeRoute, routeCodecFor } from './modules/actions';
 import { MotaControl, type ControlContext, type MoveResult } from './modules/control';
 import { MotaItems } from './modules/items';
@@ -128,6 +129,7 @@ export class MotaRuntime {
             items: data.items,
             hero: this.state.hero,
             floorId: this.state.floorId,
+            floorIds: this.floorIds,
             getFloor: (id) => this.data.floors[id] as FloorData,
             getBlocks: (id) => this.getBlocks(id),
         };
@@ -195,11 +197,30 @@ export class MotaRuntime {
             globals: this.globals,
             hero: this.state.hero,
             enemys: this.data.enemys as Record<string, unknown>,
-            functions: this.functions,
+            functions: { ...this.builtinFunctions(), ...this.functions },
             prefix,
             getBlock: (x, y) => this.control.blockAt(x, y),
+            // SAFETY: FloorData 的字段（ratio/width/canFlyFrom…）本就是按名字取值的
+            // 字典，`floor:属性` 只做只读查表，不会写入未知字段。
             floor: this.floor as unknown as Record<string, unknown>,
         };
+    }
+
+    /** 值块内建函数（旧 core 的 nextX / getBlockId / bigmap / nearStair 等） */
+    private builtinFunctions(): Record<string, (...args: unknown[]) => unknown> {
+        return createBuiltins({
+            hero: this.state.hero,
+            floorId: this.state.floorId,
+            floorIds: this.floorIds,
+            getFloor: (id) => this.data.floors[id] as FloorData,
+            getBlocks: (id) => this.getBlocks(id),
+        });
+    }
+
+    /** 楼层顺序（旧 `core.floorIds`）：以塔数据为准，缺失时退回楼层表的键顺序 */
+    get floorIds(): string[] {
+        const declared = this.data.tower.main.floorIds;
+        return declared.length > 0 ? declared : Object.keys(this.data.floors);
     }
 
     /** 塔的等级表（旧 `firstData.levelUp`） */

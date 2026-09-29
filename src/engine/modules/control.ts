@@ -63,6 +63,8 @@ export interface ControlContext {
     items: Record<string, ItemData>;
     hero: HeroState;
     floorId: string;
+    /** 楼层顺序（旧 `core.floorIds`）；缺省时视为只有当前一层 */
+    floorIds?: string[];
     /** 取得某层数据 */
     getFloor(floorId: string): FloorData;
     /** 取得某层可变的 block 列表 */
