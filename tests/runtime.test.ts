@@ -208,4 +208,35 @@ describe('MotaRuntime', () => {
         expect(rt.state.hero.y).toBe(0); // 剧本事件不移动
         expect(rt.state.hero.direction).toBe('down');
     });
+
+    test('移动、转向与剧本事件都记入录像路线', () => {
+        const rt = new MotaRuntime(data, null);
+        rt.move(-1, 0); // 走到 (0,0) 黄钥匙，朝向 left
+        rt.turn(); // 顺时针：left -> up
+        rt.turn('down');
+        expect(rt.route.route).toEqual(['left', 'turn', 'turn:down']);
+
+        const withEvent: RuntimeData = structuredClone(data);
+        withEvent.floors.f1.events = { '1,1': ['你好'] };
+        const rt2 = new MotaRuntime(withEvent, null);
+        rt2.move(0, 1);
+        expect(rt2.route.route).toEqual(['down']);
+    });
+
+    test('存档包含录像路线并可还原', () => {
+        const storage = memStorage();
+        const rt = new MotaRuntime(data, storage);
+        rt.move(-1, 0);
+        rt.turn('down');
+        expect(rt.save()).toBe(true);
+
+        const raw = JSON.parse(storage.map.get('mota-save-v3') as string) as {
+            route: string;
+        };
+        expect(typeof raw.route).toBe('string');
+
+        const rt2 = new MotaRuntime(data, storage);
+        expect(rt2.load()).toBe(true);
+        expect(rt2.route.route).toEqual(['left', 'turn:down']);
+    });
 });

@@ -49,3 +49,11 @@ export interface GameState {
      */
     flags: Record<string, unknown>;
 }
+
+/**
+ * 存档内容：运行时状态 + 编码后的录像路线。
+ * 路线与状态分开存放，便于单独分享 / 播放录像。
+ */
+export interface SaveData extends GameState {
+    route: string;
+}

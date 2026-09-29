@@ -58,6 +58,32 @@ export function resolveEvent(maps: Maps, number: number): BlockEvent | null {
     return finalizeNoPass({ cls: 'terrains', id: 'none', noPass: false });
 }
 
+/**
+ * 旧 `maps.getNumberById`：图块 id → 地图编号。
+ * 用于录像里的 `item:<id>` / `equip:<id>` 压缩为编号；未知返回 0（即 none）。
+ */
+export function numberById(maps: Maps, id: string): number {
+    for (const key of Object.keys(maps)) {
+        if (maps[key]?.id === id) return parseInt(key, 10) || 0;
+    }
+    if (/^X\d+$/.test(id)) return parseInt(id.slice(1), 10);
+    if (id === 'airwall') return AIRWALL_ID;
+    return 0;
+}
+
+/**
+ * 旧 `_decodeRoute_number2id`：地图编号 → 图块 id。
+ * 仅纯数字编号会查表，其余原样返回。
+ */
+export function idByNumber(maps: Maps, number: string | number): string {
+    const key = String(number);
+    if (/^\d+$/.test(key)) {
+        const element = maps[key];
+        if (element) return element.id;
+    }
+    return key;
+}
+
 /** 是否包含某个方向（cannotIn / cannotOut / cannotMove 等数组字段） */
 export function includesDirection(value: unknown, direction: string): boolean {
     return Array.isArray(value) && value.includes(direction);

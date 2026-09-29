@@ -1,14 +1,16 @@
 import type { FloorData } from '../shared/data/schema';
+import { RouteRecorder, decodeRoute, encodeRoute, routeCodecFor } from './modules/actions';
 import { MotaControl, type ControlContext, type MoveResult } from './modules/control';
 import {
     MotaEvents,
     createHeadlessPresenter,
     type EventPresenter,
     type ScriptAction,
+    turnDirection,
 } from './modules/events';
 import { extractBlocks, isDoor, isEnemy, isItem, type Block } from './modules/maps';
 import { getStatusOrDefault } from './modules/status';
-import type { GameState, HeroState, RuntimeData } from './types';
+import type { Direction, GameState, HeroState, RuntimeData, SaveData } from './types';
 
 export interface StorageLike {
     getItem(key: string): string | null;
@@ -62,6 +64,8 @@ export class MotaRuntime {
     state: GameState;
 
     readonly events: MotaEvents;
+    /** 录像路线（可编码进存档 / 分享为录像文件） */
+    readonly route = new RouteRecorder();
 
     private readonly storage: StorageLike | null;
     private readonly control: MotaControl;
@@ -163,6 +167,7 @@ export class MotaRuntime {
             else if (dx > 0) ctx.hero.direction = 'right';
             this.events.start(block.event.data as ScriptAction, { x: targetX, y: targetY });
             this.state.floorId = ctx.floorId;
+            this.route.record(ctx.hero.direction);
             return { moved: false, action: 'event', x: targetX, y: targetY };
         }
 
@@ -170,7 +175,25 @@ export class MotaRuntime {
         // control 内可能切换楼层，这里同步回运行时状态
         this.state.floorId = this.control.ctx.floorId;
         if (result.moved) this.state.hero.steps += 1;
+        // 旧引擎对每次移动尝试都记录方向（含被挡住的情况）
+        this.route.record(this.control.ctx.hero.direction);
         return result;
+    }
+
+    /**
+     * 旧 `turnHero`：原地转向。不给方向时按 `:right` 顺时针转 90 度，
+     * 并把 `turn:<方向>` / `turn` 记入录像。
+     */
+    turn(direction?: Direction): Direction {
+        const ctx = this.control.ctx;
+        if (direction) {
+            ctx.hero.direction = direction;
+            this.route.record(`turn:${direction}`);
+        } else {
+            ctx.hero.direction = turnDirection(':right', ctx.hero.direction);
+            this.route.record('turn');
+        }
+        return ctx.hero.direction;
     }
 
     /** 当前楼层的怪物列表（按伤害排序），供怪物手册使用 */
@@ -187,7 +210,11 @@ export class MotaRuntime {
 
     save(): boolean {
         if (!this.storage) return false;
-        this.storage.setItem(SAVE_KEY, JSON.stringify(this.state));
+        const payload: SaveData = {
+            ...this.state,
+            route: encodeRoute(this.route.route, routeCodecFor(this.data.maps)),
+        };
+        this.storage.setItem(SAVE_KEY, JSON.stringify(payload));
         return true;
     }
 
@@ -196,12 +223,18 @@ export class MotaRuntime {
         const raw = this.storage.getItem(SAVE_KEY);
         if (!raw) return false;
         try {
-            const parsed = JSON.parse(raw) as GameState;
-            this.state = parsed;
+            const parsed = JSON.parse(raw) as SaveData;
+            this.state = {
+                floorId: parsed.floorId,
+                hero: parsed.hero,
+                flags: parsed.flags,
+            };
+            this.route.route = decodeRoute(parsed.route, routeCodecFor(this.data.maps));
+            this.route.clearFolding();
             // 重新绑定 control 的可变引用
-            this.control.ctx.hero = parsed.hero;
-            this.control.ctx.floorId = parsed.floorId;
-            this.control.ctx.flags = parsed.flags;
+            this.control.ctx.hero = this.state.hero;
+            this.control.ctx.floorId = this.state.floorId;
+            this.control.ctx.flags = this.state.flags;
             return true;
         } catch {
             return false;
