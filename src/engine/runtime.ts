@@ -1,6 +1,12 @@
 import type { FloorData } from '../shared/data/schema';
 import { MotaControl, type ControlContext, type MoveResult } from './modules/control';
-import { extractBlocks, type Block } from './modules/maps';
+import {
+    MotaEvents,
+    createHeadlessPresenter,
+    type EventPresenter,
+    type ScriptAction,
+} from './modules/events';
+import { extractBlocks, isDoor, isEnemy, isItem, type Block } from './modules/maps';
 import { getStatusOrDefault } from './modules/status';
 import type { GameState, HeroState, RuntimeData } from './types';
 
@@ -55,11 +61,17 @@ export class MotaRuntime {
     readonly data: RuntimeData;
     state: GameState;
 
+    readonly events: MotaEvents;
+
     private readonly storage: StorageLike | null;
     private readonly control: MotaControl;
+    private readonly globals: Record<string, unknown> = {};
     private readonly blockCache: Record<string, Block[]> = {};
-
-    constructor(data: RuntimeData, storage: StorageLike | null = defaultStorage()) {
+    constructor(
+        data: RuntimeData,
+        storage: StorageLike | null = defaultStorage(),
+        presenter: EventPresenter = createHeadlessPresenter(),
+    ) {
         this.data = data;
         this.storage = storage;
 
@@ -83,6 +95,17 @@ export class MotaRuntime {
             getBlocks: (id) => this.getBlocks(id),
         };
         this.control = new MotaControl(ctx);
+        this.events = new MotaEvents({
+            ...ctx,
+            control: this.control,
+            presenter,
+            globals: this.globals,
+        });
+    }
+
+    /** 替换事件呈现器（如接入 DOM 状态栏 / 对话框） */
+    setPresenter(presenter: EventPresenter): void {
+        this.events.host.presenter = presenter;
     }
 
     get floor(): FloorData {
@@ -119,6 +142,30 @@ export class MotaRuntime {
 
     /** 单步移动/交互；返回动作描述 */
     move(dx: number, dy: number): MoveResult {
+        const ctx = this.control.ctx;
+        const targetX = ctx.hero.x + dx;
+        const targetY = ctx.hero.y + dy;
+        const block = this.control.blockAt(targetX, targetY);
+
+        // 剧本事件块（NPC / 告示牌等）：面向目标并执行剧本，勇士不移动
+        if (
+            block &&
+            !block.disable &&
+            block.event.trigger === 'action' &&
+            block.event.data != null &&
+            !isEnemy(block.event) &&
+            !isDoor(block.event) &&
+            !isItem(block.event)
+        ) {
+            if (dy < 0) ctx.hero.direction = 'up';
+            else if (dy > 0) ctx.hero.direction = 'down';
+            else if (dx < 0) ctx.hero.direction = 'left';
+            else if (dx > 0) ctx.hero.direction = 'right';
+            this.events.start(block.event.data as ScriptAction, { x: targetX, y: targetY });
+            this.state.floorId = ctx.floorId;
+            return { moved: false, action: 'event', x: targetX, y: targetY };
+        }
+
         const result = this.control.move(dx, dy);
         // control 内可能切换楼层，这里同步回运行时状态
         this.state.floorId = this.control.ctx.floorId;

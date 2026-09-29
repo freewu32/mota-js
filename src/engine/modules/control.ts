@@ -80,7 +80,7 @@ export function removeItem(hero: HeroState, id: string, count = 1): boolean {
     return true;
 }
 
-export type MoveAction = 'none' | 'move' | 'door' | 'item' | 'battle' | 'floor';
+export type MoveAction = 'none' | 'move' | 'door' | 'item' | 'battle' | 'floor' | 'event';
 
 export interface MoveResult {
     moved: boolean;

@@ -188,4 +188,24 @@ describe('MotaRuntime', () => {
         expect(list[0].id).toBe('slime');
         expect(list[0].damage).toBe('0');
     });
+
+    test('撞上剧本事件块时执行剧本并停步', () => {
+        const withEvent: RuntimeData = structuredClone(data);
+        withEvent.floors.f1.events = { '1,1': ['你好'] };
+        const rt = new MotaRuntime(withEvent, null);
+        const texts: string[] = [];
+        rt.setPresenter({
+            text: (text, _data, done) => {
+                texts.push(text);
+                done();
+            },
+        });
+
+        const result = rt.move(0, 1); // 目标 (1,1) 的 NPC
+        expect(result.action).toBe('event');
+        expect(result.moved).toBe(false);
+        expect(texts).toEqual(['你好']);
+        expect(rt.state.hero.y).toBe(0); // 剧本事件不移动
+        expect(rt.state.hero.direction).toBe('down');
+    });
 });
