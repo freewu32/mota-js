@@ -41,5 +41,31 @@ describe('migrate', () => {
         const floorId = result.floors[0]!;
         const floor = await Bun.file(join(out, 'floors', `${floorId}.json`)).json();
         expect(floorSchema.safeParse(floor).success).toBe(true);
+
+        // 道具效果被转成剧本动作 / 值块表达式
+        const items = (await Bun.file(join(out, 'items.json')).json()) as Record<
+            string,
+            Record<string, unknown>
+        >;
+        expect(items.redPotion?.itemEffect).toEqual([
+            {
+                type: 'setValue',
+                name: 'status:hp',
+                operator: '+=',
+                value: 'value:redPotion * floor:ratio',
+            },
+        ]);
+        expect(items.redPotion?.canUseItemEffect).toBe('true');
+        expect(items.redPotion?.itemEffectTip).toBe('，生命+${value:redPotion * floor:ratio}');
+        expect(items.poisonWine?.useItemEffect).toEqual([
+            { type: 'triggerDebuff', action: 'remove', kind: 'poison' },
+        ]);
+        expect(items.poisonWine?.canUseItemEffect).toBe('flag:poison');
+
+        // 无法静态转换的效果保留原文并计入报告
+        expect(items.freezeBadge?.useItemEffect).toBeUndefined();
+        expect(typeof items.freezeBadge?.useItemEffectLegacy).toBe('string');
+        expect(result.untranslated.some((one) => one.startsWith('freezeBadge.'))).toBe(true);
+        expect(result.untranslated.some((one) => one.startsWith('book.'))).toBe(true);
     });
 });

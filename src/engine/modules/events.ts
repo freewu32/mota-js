@@ -13,6 +13,7 @@
  */
 import type { Direction } from '../types';
 import { MotaControl, addItem, type ControlContext } from './control';
+import { triggerDebuff, type DebuffType } from './status';
 import { blockAt, isDoor, isEnemy, isItem, resolveEvent, type Block } from './maps';
 import {
     applyOperator,
@@ -281,6 +282,7 @@ export class MotaEvents {
             restart: this.actionRestart,
             exit: this.actionExit,
             setGlobalValue: this.actionSetGlobalValue,
+            triggerDebuff: this.actionTriggerDebuff,
             ...(host.actions ?? {}),
         };
     }
@@ -316,6 +318,8 @@ export class MotaEvents {
             prefix: this.prefixFor(targetFloor),
             functions: this.host.functions,
             getBlock: (x, y) => blockAt(ctx.getBlocks(targetFloor), x, y),
+            // 楼层属性（旧 `core.status.thisMap`，如 ratio 倍率）
+            floor: ctx.getFloor(targetFloor) as unknown as Record<string, unknown>,
         };
     }
 
@@ -836,6 +840,24 @@ export class MotaEvents {
 
     private actionSetGlobalValue(data: ScriptActionObject): void {
         this.control.ctx.values[String(data.name)] = data.value;
+    }
+
+    /**
+     * 毒衰咒的获得与解除（旧 `core.triggerDebuff`）。
+     * `kind` 支持单个或数组，`action` 缺省为 `get`。
+     */
+    private actionTriggerDebuff(data: ScriptActionObject): void {
+        const raw = data.kind ?? data.type;
+        const kinds = (Array.isArray(raw) ? raw : [raw]) as DebuffType[];
+        const action = data.action === 'remove' ? 'remove' : 'get';
+        const changed = triggerDebuff(
+            this.control.ctx.flags,
+            this.control.ctx.hero,
+            this.control.ctx.values,
+            action,
+            kinds,
+        );
+        if (changed) this.afterValueChange(data);
     }
 
     private numberById(id: string): number | null {

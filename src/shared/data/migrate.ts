@@ -10,7 +10,80 @@ import {
     mapsSchema,
     towerDataSchema,
 } from './schema';
+import { translateItemActions, translateItemCondition, translateTipText } from './item-effect';
 
+/**
+ * 迁移道具的效果字段。
+ *
+ * 旧塔把效果写成 JS 片段（引擎 `eval` 执行），新引擎改为剧本动作列表 +
+ * 值块表达式；无法静态转换的字段改名为 `*Legacy` 保留原文并计入报告。
+ */
+/** 迁移后的道具表：字段结构宽松（效果为动作列表、条件为表达式字符串） */
+export type MigratedItems = Record<string, Record<string, unknown>>;
+
+interface MigrateItemsResult {
+    items: MigratedItems;
+    untranslated: string[];
+}
+
+/**
+ * 单个字段的转换失败不应中断整塔迁移：异常一律记入报告并退回人工迁移。
+ */
+function safeTranslate<T>(label: string, report: string[], run: () => T): T | null {
+    try {
+        return run();
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        report.push(`${label}：转换异常 ${reason}`);
+        return null;
+    }
+}
+
+function migrateItems(raw: unknown): MigrateItemsResult {
+    const untranslated: string[] = [];
+    const source = (raw ?? {}) as Record<string, Record<string, unknown>>;
+    const items: MigratedItems = {};
+    for (const [id, original] of Object.entries(source)) {
+        const item: Record<string, unknown> = { ...original };
+        for (const field of ['itemEffect', 'useItemEffect'] as const) {
+            const script = item[field];
+            if (script == null) continue;
+            const result = safeTranslate(`${id}.${field}`, untranslated, () =>
+                translateItemActions(script),
+            );
+            if (result?.actions) {
+                item[field] = result.actions;
+                continue;
+            }
+            if (result) untranslated.push(`${id}.${field}：${result.reason}`);
+            item[`${field}Legacy`] = script;
+            delete item[field];
+        }
+        if (typeof item.canUseItemEffect === 'string') {
+            const condition = item.canUseItemEffect;
+            const result = safeTranslate(`${id}.canUseItemEffect`, untranslated, () =>
+                translateItemCondition(condition),
+            );
+            if (result?.expression) item.canUseItemEffect = result.expression;
+            else {
+                if (result) untranslated.push(`${id}.canUseItemEffect：${result.reason}`);
+                item.canUseItemEffectLegacy = condition;
+                delete item.canUseItemEffect;
+            }
+        }
+        for (const field of ['text', 'itemEffectTip', 'useItemTip'] as const) {
+            const translated = safeTranslate(`${id}.${field}`, untranslated, () =>
+                translateTipText(item[field]),
+            );
+            if (translated != null && translated !== item[field]) item[field] = translated;
+        }
+        if (item.useItemEvent != null && JSON.stringify(item.useItemEvent).includes('core.')) {
+            untranslated.push(`${id}.useItemEvent：含 core 引用，需人工迁移`);
+        }
+        items[id] = item;
+    }
+    return { items, untranslated };
+}
 export interface MigrateOptions {
     /** 旧数据目录（含 data.js、floors/*.js 等） */
     from: string;
@@ -25,6 +98,8 @@ export interface MigrateResult {
     floors: string[];
     /** 需人工迁移的脚本文件（相对 from） */
     scripts: string[];
+    /** 需人工迁移的道具效果字段（含原因） */
+    untranslated: string[];
 }
 
 /**
@@ -42,8 +117,15 @@ export function parseAssignment(src: string, pattern: RegExp): unknown {
     return JSON.parse(body);
 }
 
+/** 读取并解析赋值语句；失败时带上文件名，便于定位是哪份数据出错 */
 async function readAssignment(path: string, pattern: RegExp): Promise<unknown> {
-    return parseAssignment(await readFile(path, 'utf8'), pattern);
+    const src = await readFile(path, 'utf8');
+    try {
+        return parseAssignment(src, pattern);
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`解析失败 ${path}：${reason}`, { cause: error });
+    }
 }
 
 const VAR_PATTERN = /var\s+(\w+)\s*=/;
@@ -53,7 +135,6 @@ const JSON_DATA: ReadonlyArray<[string, ZodType]> = [
     ['enemys', enemysSchema],
     ['icons', iconsSchema],
     ['maps', mapsSchema],
-    ['items', itemsSchema],
     ['events', eventsSchema],
 ];
 
@@ -82,6 +163,11 @@ export async function migrate(options: MigrateOptions): Promise<MigrateResult> {
         await write(`${name}.json`, schema.parse(obj));
     }
 
+    // items.js -> items.json：效果字段需要把旧 JS 片段转成剧本动作 / 值块表达式
+    const rawItems = await readAssignment(join(from, 'items.js'), VAR_PATTERN);
+    const { items, untranslated } = migrateItems(rawItems);
+    await write('items.json', itemsSchema.parse(items));
+
     // floors/*.js -> floors/<id>.json
     const floorDir = join(from, 'floors');
     for (const entry of await readdir(floorDir)) {
@@ -100,5 +186,5 @@ export async function migrate(options: MigrateOptions): Promise<MigrateResult> {
         if (await Bun.file(path).exists()) scripts.push(`${name}.js`);
     }
 
-    return { files, floors, scripts };
+    return { files, floors, scripts, untranslated };
 }

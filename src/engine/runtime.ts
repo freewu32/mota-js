@@ -1,6 +1,7 @@
 import type { FloorData } from '../shared/data/schema';
 import { RouteRecorder, decodeRoute, encodeRoute, routeCodecFor } from './modules/actions';
 import { MotaControl, type ControlContext, type MoveResult } from './modules/control';
+import { MotaItems } from './modules/items';
 import {
     MotaEvents,
     createHeadlessPresenter,
@@ -65,7 +66,24 @@ export function normalizeHero(raw: unknown): HeroState {
             tools: { ...((items.tools as Record<string, number>) ?? {}) },
             equips: { ...((items.equips as Record<string, number>) ?? {}) },
         },
-        equipment: Array.isArray(source.equipment) ? [...(source.equipment as string[])] : [],
+        equipment: Array.isArray(source.equipment)
+            ? [...(source.equipment as (string | null)[])]
+            : [],
+        // 旧 `control._initStatistics`：统计字段在旧存档里可能缺失，这里统一补全
+        statistics: {
+            totalTime: 0,
+            currTime: 0,
+            hp: 0,
+            battle: 0,
+            money: 0,
+            exp: 0,
+            battleDamage: 0,
+            poisonDamage: 0,
+            extraDamage: 0,
+            moveDirectly: 0,
+            ignoreSteps: 0,
+            ...((source.statistics as Record<string, number>) ?? {}),
+        },
     };
 }
 
@@ -75,6 +93,8 @@ export class MotaRuntime {
     state: GameState;
 
     readonly events: MotaEvents;
+    /** 道具与装备（旧 `core.items` / `core.material.items` 的组合） */
+    readonly items: MotaItems;
     /** 录像路线（可编码进存档 / 分享为录像文件） */
     readonly route = new RouteRecorder();
 
@@ -112,6 +132,27 @@ export class MotaRuntime {
             getBlocks: (id) => this.getBlocks(id),
         };
         this.control = new MotaControl(ctx);
+        this.items = new MotaItems({
+            get hero() {
+                return ctx.hero;
+            },
+            items: data.items,
+            get flags() {
+                return ctx.flags;
+            },
+            values: data.tower.values as Record<string, unknown>,
+            equipName: Array.isArray(data.tower.main.equipName)
+                ? (data.tower.main.equipName as string[])
+                : [],
+            // 效果脚本交给剧本解释器执行，保持与事件同一套动作词汇
+            runScript: (actions) => void this.events.start(actions as ScriptAction),
+            scope: (prefix) => this.valueScope(prefix),
+            record: (token) => this.route.record(token),
+            tip: (text, icon) => this.events.host.presenter.tip?.(text, icon),
+            playSound: (name) =>
+                this.events.host.presenter.effect?.('playSound', { type: 'playSound', name }),
+        });
+        ctx.itemEffects = this.items;
         this.events = new MotaEvents({
             ...ctx,
             control: this.control,
@@ -157,6 +198,7 @@ export class MotaRuntime {
             functions: this.functions,
             prefix,
             getBlock: (x, y) => this.control.blockAt(x, y),
+            floor: this.floor as unknown as Record<string, unknown>,
         };
     }
 
@@ -203,6 +245,11 @@ export class MotaRuntime {
             save: (): boolean => this.save(),
             load: (): boolean => this.load(),
             getState: (): GameState => structuredClone(this.state),
+            hasItem: (id: string): boolean => this.items.has(id),
+            addItem: (id: string, num?: number): void => this.items.add(id, num),
+            useItem: (id: string): boolean => this.items.use(id),
+            equip: (id: string): boolean => this.items.equip(id),
+            unequip: (type: number): boolean => this.items.unequip(type),
         };
     }
 
@@ -244,6 +291,8 @@ export class MotaRuntime {
         if (result.moved) this.state.hero.steps += 1;
         // 旧引擎对每次移动尝试都记录方向（含被挡住的情况）
         this.route.record(this.control.ctx.hero.direction);
+        // 即捡即用类道具的提示（旧 `drawTip(getItemEffectTip())`）
+        if (result.tip) this.events.host.presenter.tip?.(result.tip);
         return result;
     }
 

@@ -18,6 +18,30 @@ export interface HeroItems {
     equips: Record<string, number>;
 }
 
+/** 旧 `hero.statistics`：游戏过程中的累计统计 */
+export interface HeroStatistics {
+    /** 总游戏时长（毫秒，含未游玩时间） */
+    totalTime: number;
+    /** 当前游戏时长（毫秒） */
+    currTime: number;
+    /** 上次开始计时的时间戳 */
+    start?: number;
+    /** 累计回血数值 */
+    hp: number;
+    /** 累计击杀怪物数 */
+    battle: number;
+    /** 累计获得金币 / 经验 */
+    money: number;
+    exp: number;
+    /** 累计伤害：战斗 / 中毒 / 额外 */
+    battleDamage: number;
+    poisonDamage: number;
+    extraDamage: number;
+    /** 瞬间移动次数与少走的步数 */
+    moveDirectly: number;
+    ignoreSteps: number;
+}
+
 /** 勇士的数值属性（不含坐标） */
 export interface HeroStats {
     hp: number;
@@ -35,8 +59,11 @@ export interface HeroStats {
     exp: number;
     lv: number;
     steps: number;
+    /** 游戏统计（旧 hero.statistics，供统计面板与回血统计使用） */
+    statistics?: HeroStatistics;
     items: HeroItems;
-    equipment: string[];
+    /** 已穿装备，按槽位下标存放；空槽为 null（旧 `hero.equipment`） */
+    equipment: (string | null)[];
 }
 
 export interface HeroState extends HeroStats {

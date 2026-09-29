@@ -26,9 +26,30 @@ import {
 } from './maps';
 import { addStatus, hasFlag, setFlag, triggerDebuff, type DebuffType } from './status';
 
+/**
+ * 道具数据。
+ *
+ * 旧数据里的 `itemEffect` 等字段是 JS 字符串（由 `eval` 执行），新格式改为：
+ * - 效果为剧本动作列表（`events.ts` 的动作词汇）；
+ * - 条件为表达式字符串（`values.ts` 求值）；
+ * - 提示文本支持 `${表达式}` 插值。
+ */
 export interface ItemData {
     cls?: string;
     name?: string;
+    text?: string;
+    /** 拾取即生效的效果（`cls: 'items'`） */
+    itemEffect?: unknown;
+    /** 拾取提示文本 */
+    itemEffectTip?: string;
+    /** 使用时执行的效果 */
+    useItemEffect?: unknown;
+    /** 使用后追加的剧本 */
+    useItemEvent?: unknown;
+    /** 能否使用 / 能否装备的条件表达式 */
+    canUseItemEffect?: string;
+    /** 装备属性 */
+    equip?: Record<string, unknown>;
     [key: string]: unknown;
 }
 
@@ -46,6 +67,19 @@ export interface ControlContext {
     getFloor(floorId: string): FloorData;
     /** 取得某层可变的 block 列表 */
     getBlocks(floorId: string): Block[];
+    /**
+     * 拾取「即捡即用类」道具的处理（由 `items.ts` 注入）。
+     * 返回 true 表示效果已就地生效、道具不进入背包。
+     */
+    itemEffects?: ItemEffectRunner;
+}
+
+/** 交给道具模块处理拾取效果的最小接口，避免 control 反向依赖 items */
+export interface ItemEffectRunner {
+    /** 即捡即用类道具拾取时的效果；返回是否已就地生效 */
+    runPickUpEffect(id: string, count?: number): boolean;
+    /** 拾取提示文本（旧 `getItemEffectTip`） */
+    effectTip(id: string): string;
 }
 
 const INVENTORY_KEYS: ItemClass[] = ['constants', 'tools', 'equips'];
@@ -66,6 +100,10 @@ export function addItem(hero: HeroState, id: string, count = 1, cls?: string): v
     hero.items[bag][id] = (hero.items[bag][id] ?? 0) + count;
 }
 
+/**
+ * 删除道具；数量不足时不做任何改动。
+ * 与旧 `removeItem` 一致：减到 0 或以下就从背包里删掉这一项。
+ */
 export function removeItem(hero: HeroState, id: string, count = 1): boolean {
     if (itemCount(hero, id) < count) return false;
     let left = count;
@@ -73,7 +111,9 @@ export function removeItem(hero: HeroState, id: string, count = 1): boolean {
         const have = hero.items[key][id] ?? 0;
         if (have === 0) continue;
         const take = Math.min(have, left);
-        hero.items[key][id] = have - take;
+        const rest = have - take;
+        if (rest <= 0) delete hero.items[key][id];
+        else hero.items[key][id] = rest;
         left -= take;
         if (left === 0) break;
     }
@@ -89,6 +129,8 @@ export interface MoveResult {
     y: number;
     /** 战斗伤害（仅 action === 'battle'） */
     damage?: number;
+    /** 拾取提示（仅 action === 'item'，如「生命+100」） */
+    tip?: string;
 }
 
 export class MotaControl {
@@ -189,8 +231,8 @@ export class MotaControl {
         const landed = this.blockAt(x, y);
         if (landed && !landed.disable) {
             if (isItem(landed.event)) {
-                this.pickUp(landed);
-                return { moved: true, action: 'item', x, y };
+                const tip = this.pickUp(landed);
+                return { moved: true, action: 'item', x, y, tip: tip || undefined };
             }
             if (landed.event.trigger === 'changeFloor') {
                 this.changeFloor(landed);
@@ -223,11 +265,17 @@ export class MotaControl {
         return true;
     }
 
-    /** 拾取物品，加入背包并移除图块 */
-    pickUp(block: Block): void {
-        const item = this.ctx.items[block.event.id];
-        addItem(this.ctx.hero, block.event.id, 1, item?.cls);
+    /**
+     * 拾取物品：即捡即用类就地生效，其余进入背包，最后移除图块。
+     * 返回「即捡即用类」的提示文本（旧 `getItemEffectTip`），无提示时为空串。
+     */
+    pickUp(block: Block): string {
+        const id = block.event.id;
+        const item = this.ctx.items[id];
+        const consumed = this.ctx.itemEffects?.runPickUpEffect(id, 1) ?? false;
+        if (!consumed) addItem(this.ctx.hero, id, 1, item?.cls);
         this.disableBlock(block);
+        return this.ctx.itemEffects?.effectTip(id) ?? '';
     }
 
     /**

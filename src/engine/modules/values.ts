@@ -35,6 +35,8 @@ export interface ValueScope {
     prefix?: string;
     /** 查询当前层某点的图块（blockId / blockNumber / blockCls） */
     getBlock?: (x: number, y: number) => Block | undefined;
+    /** 当前层数据（供 `floor:属性` 读取，如旧 `thisMap.ratio`） */
+    floor?: Record<string, unknown>;
     /** 宿主注入的函数，供条件/文本表达式调用（如 rand / rand2） */
     functions?: Record<string, (...args: unknown[]) => unknown>;
 }
@@ -62,7 +64,8 @@ type TraitName =
     | 'blockId'
     | 'blockNumber'
     | 'blockCls'
-    | 'equip';
+    | 'equip'
+    | 'floor';
 
 interface TraitToken {
     kind: 'trait';
@@ -80,7 +83,7 @@ type Token =
 const NAME_START = /[A-Za-z_$\u4E00-\u9FCC\u3040-\u30FF\u2160-\u216B\u0391-\u03C9]/;
 const NAME_CHAR = /[A-Za-z0-9_$\u4E00-\u9FCC\u3040-\u30FF\u2160-\u216B\u0391-\u03C9]/;
 const TRAIT_RE =
-    /^(status|item|buff|flag|switch|temp|global|value|enemy|blockId|blockNumber|blockCls|equip)[:：]/;
+    /^(status|item|buff|flag|switch|temp|global|value|enemy|blockId|blockNumber|blockCls|equip|floor)[:：]/;
 
 /** 从长到短匹配，避免 `===` 被拆成 `==` + `=` */
 const OPERATORS = [
@@ -293,6 +296,9 @@ function readTraitValue(scope: ValueScope, token: TraitToken, prefix: string): u
         }
         case 'equip':
             return scope.hero.equipment[Number(a)] ?? null;
+        // 当前层属性（旧 `core.status.thisMap.xxx`）
+        case 'floor':
+            return scope.floor?.[String(a)] ?? 0;
     }
 }
 

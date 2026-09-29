@@ -17,3 +17,7 @@ console.log(`  ${result.files.join(', ')}`);
 if (result.scripts.length > 0) {
     console.log(`需人工迁移的脚本: ${result.scripts.join(', ')}`);
 }
+if (result.untranslated.length > 0) {
+    console.log(`需人工迁移的道具效果 ${result.untranslated.length} 处：`);
+    for (const one of result.untranslated) console.log(`  ${one}`);
+}

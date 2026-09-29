@@ -5,7 +5,7 @@ import type { RuntimeData } from '../src/engine/types';
 
 const data: RuntimeData = {
     tower: {
-        main: { floorIds: ['f1', 'f2'] },
+        main: { floorIds: ['f1', 'f2'], equipName: ['武器', '防具'] },
         firstData: {
             title: 't',
             name: 'n',
@@ -23,7 +23,7 @@ const data: RuntimeData = {
                 loc: { x: 1, y: 0, direction: 'down' },
             },
         },
-        values: { hatred: 2 },
+        values: { hatred: 2, redPotion: 100 },
         flags: { enableNegativeDamage: true },
     },
     maps: {
@@ -42,8 +42,22 @@ const data: RuntimeData = {
         slime: { name: '史莱姆', hp: 30, atk: 5, def: 0, money: 5, exp: 3, point: 0, special: 0 },
     },
     items: {
-        redPotion: { cls: 'items', name: '红血瓶' },
+        redPotion: {
+            cls: 'items',
+            name: '红血瓶',
+            itemEffect: [
+                { type: 'setValue', name: 'status:hp', operator: '+=', value: 'value:redPotion' },
+            ],
+            itemEffectTip: '，生命+${value:redPotion}',
+        },
         yellowKey: { cls: 'tools', name: '黄钥匙' },
+        superPotion: {
+            cls: 'tools',
+            name: '超级血瓶',
+            canUseItemEffect: 'status:hp < 150',
+            useItemEffect: [{ type: 'setValue', name: 'status:hp', operator: '+=', value: '500' }],
+        },
+        sword1: { cls: 'equips', name: '铁剑', equip: { type: 0, value: { atk: 10 } } },
     },
     icons: {},
     floors: {
@@ -63,7 +77,7 @@ const data: RuntimeData = {
             title: '二层',
             name: '2',
             map: [
-                [0, 0, 0],
+                [10, 0, 0],
                 [0, 0, 0],
                 [0, 0, 0],
             ],
@@ -174,10 +188,20 @@ describe('MotaRuntime', () => {
         expect(rt.load()).toBe(false);
     });
 
-    test('api 暴露 move/save/load/getState', () => {
+    test('api 暴露移动、存档与道具操作', () => {
         const storage = memStorage();
         const rt = new MotaRuntime(data, storage);
-        expect(Object.keys(rt.api).sort()).toEqual(['getState', 'load', 'move', 'save']);
+        expect(Object.keys(rt.api).sort()).toEqual([
+            'addItem',
+            'equip',
+            'getState',
+            'hasItem',
+            'load',
+            'move',
+            'save',
+            'unequip',
+            'useItem',
+        ]);
         rt.api.move(-1, 0);
         expect(rt.api.getState().hero.x).toBe(0);
     });
@@ -284,5 +308,80 @@ describe('MotaRuntime', () => {
         const rt2 = new MotaRuntime(data, storage);
         expect(rt2.load()).toBe(true);
         expect(rt2.route.route).toEqual(['left', 'turn:down']);
+    });
+
+    test('拾取即捡即用道具：立刻生效、不进背包并弹出提示', () => {
+        const tips: string[] = [];
+        const rt = new MotaRuntime(data, null, {
+            tip: (text) => void tips.push(text),
+        });
+        rt.move(0, 1); // (1,1)
+        rt.move(-1, 0); // (0,1)
+        rt.move(0, 1); // (0,2) 楼梯 -> 二层 (1,1)
+        expect(rt.state.floorId).toBe('f2');
+
+        const hpBefore = rt.state.hero.hp;
+        rt.move(-1, 0); // (0,1)
+        const result = rt.move(0, -1); // (0,0) 红血瓶
+        expect(result.action).toBe('item');
+        expect(rt.state.hero.hp).toBe(hpBefore + 100);
+        expect(rt.items.has('redPotion')).toBe(false);
+        expect(tips).toEqual(['，生命+100']);
+        expect(rt.state.hero.statistics?.hp).toBe(100);
+        // 图块被移除，可以再走上去
+        // 图块被禁用（旧 `removeBlock` 语义），可以再走上去
+        expect(rt.canPass(0, 0)).toBe(true);
+        expect(rt.getBlocks('f2').find((b) => b.x === 0 && b.y === 0)?.disable).toBe(true);
+    });
+
+    test('使用背包道具：条件校验、扣数量并记录像', () => {
+        const rt = new MotaRuntime(data, null);
+        rt.items.add('superPotion', 2);
+        expect(rt.items.has('superPotion')).toBe(true);
+
+        const hpBefore = rt.state.hero.hp;
+        expect(rt.items.use('superPotion')).toBe(true);
+        expect(rt.state.hero.hp).toBe(hpBefore + 500);
+        expect(rt.items.count('superPotion')).toBe(1);
+        expect(rt.route.route).toEqual(['item:superPotion']);
+
+        // 回满血后条件不再满足，道具不会被消耗
+        rt.state.hero.hp = 999;
+        expect(rt.items.use('superPotion')).toBe(false);
+        expect(rt.items.count('superPotion')).toBe(1);
+    });
+
+    test('装备与卸下：属性差生效并写入槽位，录像记 item 之外不额外记录', () => {
+        const rt = new MotaRuntime(data, null);
+        rt.items.add('sword1', 1);
+        const atkBefore = rt.state.hero.atk;
+
+        expect(rt.items.equip('sword1')).toBe(true);
+        expect(rt.state.hero.atk).toBe(atkBefore + 10);
+        expect(rt.state.hero.equipment[0]).toBe('sword1');
+        expect(rt.state.hero.items.equips.sword1).toBeUndefined();
+
+        expect(rt.items.unequip(0)).toBe(true);
+        expect(rt.state.hero.atk).toBe(atkBefore);
+        expect(rt.items.count('sword1')).toBe(1);
+    });
+
+    test('毒衰咒道具：条件成立时解除状态', () => {
+        const withWine: RuntimeData = structuredClone(data);
+        withWine.items.poisonWine = {
+            cls: 'tools',
+            name: '解毒药水',
+            canUseItemEffect: 'flag:poison',
+            useItemEffect: [{ type: 'triggerDebuff', action: 'remove', kind: 'poison' }],
+        };
+        const rt = new MotaRuntime(withWine, null);
+        rt.items.add('poisonWine', 1);
+        expect(rt.items.canUse('poisonWine')).toBe(false);
+
+        rt.events.start([{ type: 'triggerDebuff', kind: 'poison' }]);
+        expect(rt.state.flags.poison).toBe(true);
+        expect(rt.items.canUse('poisonWine')).toBe(true);
+        expect(rt.items.use('poisonWine')).toBe(true);
+        expect(rt.state.flags.poison).toBe(false);
     });
 });

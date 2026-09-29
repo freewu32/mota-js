@@ -329,6 +329,19 @@ describe('events 数值与地图', () => {
         expect(itemCount(hero, 'yellowKey')).toBe(2);
     });
 
+    test('floor: 值块读取当前层属性（旧 thisMap.ratio）', () => {
+        const { events, hero } = makeEvents();
+        floors.f1.ratio = 3;
+        try {
+            events.start([
+                { type: 'setValue', name: 'status:hp', operator: '+=', value: '10 * floor:ratio' },
+            ]);
+            expect(hero.hp).toBe(130);
+        } finally {
+            delete floors.f1.ratio;
+        }
+    });
+
     test('setBlock 按 id 换图块，number 为 0 时删除', () => {
         const { events, host } = makeEvents();
         events.start([{ type: 'setBlock', number: 'redPotion', loc: [[0, 0]] }]);
