@@ -1,4 +1,4 @@
-import type { FloorData, Icons, Maps, TowerData } from '../shared/data/schema';
+import type { Enemys, FloorData, Icons, Items, Maps, TowerData } from '../shared/data/schema';
 import type { RuntimeData } from './types';
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -9,12 +9,14 @@ async function fetchJson<T>(url: string): Promise<T> {
     return (await res.json()) as T;
 }
 
-/** 从服务端加载整座塔的数据（tower + maps + icons + 全部楼层） */
+/** 从服务端加载整座塔的数据（tower + maps + icons + enemys + items + 全部楼层） */
 export async function loadTower(base = ''): Promise<RuntimeData> {
-    const [tower, maps, icons, floorList] = await Promise.all([
+    const [tower, maps, icons, enemys, items, floorList] = await Promise.all([
         fetchJson<TowerData>(`${base}/api/data/tower`),
         fetchJson<Maps>(`${base}/api/data/maps`),
         fetchJson<Icons>(`${base}/api/data/icons`),
+        fetchJson<Enemys>(`${base}/api/data/enemys`),
+        fetchJson<Items>(`${base}/api/data/items`),
         fetchJson<{ floors: string[] }>(`${base}/api/floors`),
     ]);
 
@@ -25,5 +27,5 @@ export async function loadTower(base = ''): Promise<RuntimeData> {
         }),
     );
 
-    return { tower, maps, icons, floors };
+    return { tower, maps, icons, enemys, items, floors };
 }
