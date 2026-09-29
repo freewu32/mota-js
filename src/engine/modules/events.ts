@@ -375,6 +375,16 @@ export class MotaEvents {
 
     /* ---------------- 事件流控制 ---------------- */
 
+    /**
+     * 设定「当前事件坐标」（旧 `core.pushEventLoc`）：
+     * 后续没有 `loc` 的动作（如 `openDoor` / `removeBlock`）以它为准。
+     */
+    setEventLoc(x: number | null, y: number | null, floorId?: string | null): void {
+        if (x != null) this.x = x;
+        if (y != null) this.y = y;
+        if (floorId != null) this.floorId = floorId;
+    }
+
     /** 开始执行一段事件列表 */
     start(list: unknown, options: StartOptions = {}): void {
         this.setEvents(list, options.x, options.y, options.callback, options.floorId);
@@ -933,14 +943,14 @@ export class MotaEvents {
         const event = resolveEvent(this.host.maps, number);
         if (!event) {
             const existing = blockAt(blocks, x, y);
-            if (existing) existing.disable = true;
+            if (existing) this.control.setBlockDisabled(existing, true, floorId);
             return;
         }
         const block = blockAt(blocks, x, y);
         if (block) {
             block.id = number;
             block.event = event;
-            block.disable = false;
+            this.control.setBlockDisabled(block, false, floorId);
         } else {
             blocks.push({ x, y, id: number, event });
         }
@@ -968,7 +978,7 @@ export class MotaEvents {
         const blocks = this.control.ctx.getBlocks(floorId);
         for (const [lx, ly] of this.resolveLoc2D(data.loc, x, y, prefix)) {
             const block = blockAt(blocks, lx, ly);
-            if (block) block.disable = true;
+            if (block) this.control.setBlockDisabled(block, true, floorId);
         }
     }
 
@@ -982,7 +992,7 @@ export class MotaEvents {
         const blocks = this.control.ctx.getBlocks(floorId);
         for (const [lx, ly] of this.resolveLoc2D(data.loc, x, y, prefix)) {
             const block = blockAt(blocks, lx, ly);
-            if (block) block.disable = false;
+            if (block) this.control.setBlockDisabled(block, false, floorId);
         }
     }
 
@@ -1004,13 +1014,15 @@ export class MotaEvents {
             const filter = (data.filter ?? {}) as Record<string, unknown>;
             for (const block of blocks) {
                 if (block.disable) continue;
-                if (matchesFilter(block.event, filter)) block.disable = true;
+                if (matchesFilter(block.event, filter)) {
+                    this.control.setBlockDisabled(block, true, floorId);
+                }
             }
             return;
         }
         for (const [lx, ly] of this.resolveLoc2D(data.loc, x, y, prefix)) {
             const block = blockAt(blocks, lx, ly);
-            if (block) block.disable = true;
+            if (block) this.control.setBlockDisabled(block, true, floorId);
         }
     }
 
@@ -1171,7 +1183,7 @@ export class MotaEvents {
         for (const block of this.matchedDoors(data, x, y, prefix, floorId)) {
             // 非本层只能标记禁用（本层才谈得上扣钥匙与动画）
             if (needKey && sameFloor) this.control.openDoor(block);
-            else block.disable = true;
+            else this.control.setBlockDisabled(block, true, floorId);
         }
     }
 

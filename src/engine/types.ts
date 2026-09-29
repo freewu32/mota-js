@@ -85,6 +85,11 @@ export interface GameState {
      * - `__block_<floorId>_<x>_<y>__`：被移除的图块
      */
     flags: Record<string, unknown>;
+    /**
+     * 运行时 `values`（`value:名称` 读写的塔作者全局数值）。
+     * 开局时从 `tower.values` 克隆，之后自成一份，进出存档。
+     */
+    values: Record<string, unknown>;
 }
 
 /**

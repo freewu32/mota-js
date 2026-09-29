@@ -183,6 +183,12 @@ function makeApi(): ApiHarness {
         },
         setBlock: (floorId, x, y, numberOrId) =>
             void removed.push(`setBlock:${floorId}:${x},${y}:${numberOrId}`),
+        setBlockDisabled: (floorId, x, y, disabled) => {
+            removed.push(`setBlockDisabled:${floorId}:${x},${y}:${disabled}`);
+            const block = host.getBlocks(floorId).find((one) => one.x === x && one.y === y);
+            if (block) block.disable = disabled;
+            return true;
+        },
         addItem: () => {},
         removeItem: () => true,
         useItem: () => true,

@@ -194,3 +194,11 @@ api.set('item:yellowKey', 2, '-='); // 扣 2 把黄钥匙
 - 表达式里用到的自定义函数（如 `rand`、`rand2`）：写成脚本模块导出，或注册进 `runtime.functions`；
 - 事件钩子（`resetGame` / `win` / `lose` 等）：3.0 会在游戏入口阶段提供对应钩子；
 - 插件（修改引擎内部行为的代码）：3.0 不再支持直接改引擎内部，需要用公开 API 重写。
+
+### 图块脚本与 `checkBlock`：3.0 不会执行
+
+2.x 允许在图块属性里写一段 JS（`block.event.script`）并在踩上去时执行，样板塔的「血网 / 毒网 / 衰网 / 咒网 / 光源」就是这么做的；站立伤害、领域 / 阻击 / 激光 / 捕捉则写在 `project/functions.js` 的 `checkBlock` 里。
+
+3.0 不做 `eval`，这两处**都不会执行**（实测：踩血网不掉血、踩毒网不中毒、`light` 不会变成 `darkLight`）。引擎在读取带 `script` 字段的图块时会在控制台打印一条警告，方便定位；声明式等价物（例如 `mota.hooks.register({ checkBlock })` 或图块属性 `damage` / `debuff`）尚未提供，迁移时需要先把这段逻辑摘出来。
+
+样板塔里受影响的位置：`project/maps.json` 的 `lavaNet` / `poisonNet` / `weakNet` / `curseNet` / `light`，以及 `project/functions.js` 的 `checkBlock`。

@@ -28,12 +28,25 @@ const data: RuntimeData = {
     },
     maps: {
         '2': { cls: 'animates', id: 'wall' },
+        '4': {
+            // 墙 / 冰：同样带 doorInfo，但没有 openDoor trigger，碰撞不会开
+            cls: 'animates',
+            id: 'yellowWall',
+            canBreak: true,
+            doorInfo: { keys: {} },
+        },
+        '5': {
+            cls: 'animates',
+            id: 'ice',
+            doorInfo: { keys: { icePickaxe: 1 } },
+        },
         '3': { cls: 'terrains', id: 'upFloor', canPass: true },
         '10': { cls: 'items', id: 'redPotion' },
         '11': { cls: 'items', id: 'yellowKey' },
         '12': {
             cls: 'animates',
             id: 'yellowDoor',
+            trigger: 'openDoor',
             doorInfo: { keys: { yellowKey: 1 } },
         },
         '20': { cls: 'enemys', id: 'slime' },
@@ -51,6 +64,12 @@ const data: RuntimeData = {
             itemEffectTip: '，生命+${value:redPotion}',
         },
         yellowKey: { cls: 'tools', name: '黄钥匙' },
+        icePickaxe: {
+            cls: 'tools',
+            name: '破冰镐',
+            canUseItemEffect: "blockId(nextX(), nextY()) == 'ice'",
+            useItemEffect: [{ type: 'openDoor', loc: ['nextX()', 'nextY()'] }],
+        },
         superPotion: {
             cls: 'tools',
             name: '超级血瓶',
@@ -188,10 +207,134 @@ describe('MotaRuntime', () => {
         expect(rt2.state.flags['__block_f1_0_0__']).toBe(true);
     });
 
+    test('墙 / 冰碰撞不会被当成开门，必须用破墙镐 / 破冰镐', () => {
+        // 三种带 doorInfo 但没有 openDoor trigger 的图块都不能直接走进
+        const wallData: RuntimeData = JSON.parse(JSON.stringify(data));
+        wallData.floors.f1!.map = [
+            [0, 4, 0],
+            [0, 5, 0],
+            [0, 0, 0],
+        ];
+        wallData.floors.f1!.changeFloor = {};
+        const rt = new MotaRuntime(wallData, null);
+        rt.state.hero.x = 0;
+        rt.state.hero.y = 0;
+        rt.items.add('yellowKey', 5);
+        rt.items.add('icePickaxe', 5);
+
+        // 黄墙：撞不动、不扣钥匙
+        expect(rt.move(1, 0).action).toBe('none');
+        expect(rt.state.hero.items.tools.yellowKey).toBe(5);
+        expect(rt.canPass(1, 0)).toBe(false);
+
+        // 冰：撞不动、不扣破冰镐
+        rt.state.hero.x = 0;
+        rt.state.hero.y = 1;
+        expect(rt.move(1, 0).action).toBe('none');
+        expect(rt.state.hero.items.tools.icePickaxe).toBe(5);
+
+        // 破冰镐的 useItemEffect 里的 openDoor 才能破冰（旧 `items.js`）
+        expect(rt.items.use('icePickaxe')).toBe(true);
+        expect(rt.canPass(1, 1)).toBe(true);
+        expect(rt.state.hero.items.tools.icePickaxe).toBe(4);
+    });
+
+    test('剧本移除图块也要写入存档 flag（否则读档后墙 / 冰会回来）', () => {
+        const storage = memStorage();
+        const rt = new MotaRuntime(data, storage);
+        void rt.events.start([{ type: 'removeBlock', loc: [[2, 2]] }]); // 墙
+        expect(rt.state.flags['__block_f1_2_2__']).toBe(true);
+        expect(rt.save()).toBe(true);
+        // 读档后仍然是移除状态
+        expect(rt.load()).toBe(true);
+        expect(rt.state.flags['__block_f1_2_2__']).toBe(true);
+        expect(rt.getBlocks('f1').find((b) => b.x === 2 && b.y === 2)?.disable).toBe(true);
+
+        // show / hide 也是一对
+        void rt.events.start([{ type: 'show', loc: [[2, 2]] }]);
+        expect(rt.state.flags['__block_f1_2_2__']).toBeUndefined();
+        void rt.events.start([{ type: 'hide', loc: [[2, 2]] }]);
+        expect(rt.state.flags['__block_f1_2_2__']).toBe(true);
+    });
+
+    test('开门失败时给出提示（无法开启 / 钥匙不足）', () => {
+        const rt = new MotaRuntime(data, null);
+        rt.state.hero.x = 1;
+        rt.state.hero.y = 0;
+        const locked = rt.move(1, 0); // (2,0)
+        expect(locked.action).toBe('move');
+        const noKey = rt.move(0, 1); // 黄门，无钥匙
+        expect(noKey.action).toBe('none');
+        expect(noKey.tip).toBe('你的黄钥匙不足！');
+    });
+
     test('无 storage 时 save/load 返回 false', () => {
         const rt = new MotaRuntime(data, null);
         expect(rt.save()).toBe(false);
         expect(rt.load()).toBe(false);
+    });
+
+    test('读档会把已吃掉的图块恢复回去（block 缓存不能留在上一局）', () => {
+        const storage = memStorage();
+        const rt = new MotaRuntime(data, storage);
+        expect(rt.save()).toBe(true); // 存档点：钥匙还在 (0,0)
+        rt.move(-1, 0); // 拿钥匙
+        expect(rt.state.flags['__block_f1_0_0__']).toBe(true);
+
+        expect(rt.load()).toBe(true);
+        expect(rt.state.flags['__block_f1_0_0__']).toBeUndefined();
+        expect(rt.state.hero.items.tools.yellowKey).toBeUndefined();
+        // 回到存档点后图块真的能再吃一次
+        expect(rt.move(-1, 0).action).toBe('item');
+        expect(rt.state.hero.items.tools.yellowKey).toBe(1);
+    });
+
+    test('读档会把已打开的门恢复回去（缓存里的 disable 不能沿用）', () => {
+        const storage = memStorage();
+        const rt = new MotaRuntime(data, storage);
+        rt.move(-1, 0); // 拿黄钥匙
+        expect(rt.save()).toBe(true); // 存档点：黄门还没开
+        rt.move(1, 0); // (1,0)
+        rt.move(0, 1); // (1,1)
+        expect(rt.move(1, 0).action).toBe('door'); // 开 (2,1) 的黄门
+        expect(rt.state.flags['__block_f1_2_1__']).toBe(true);
+
+        expect(rt.load()).toBe(true);
+        expect(rt.state.flags['__block_f1_2_1__']).toBeUndefined();
+        expect(rt.canPass(2, 1)).toBe(false); // 门又关上了
+    });
+
+    test('value: 读写走运行时副本，进出存档并可被 reset 重置', () => {
+        const storage = memStorage();
+        const rt = new MotaRuntime(data, storage);
+        // 不能改动塔的初始数据
+        expect(rt.data.tower.values.redPotion).toBe(100);
+        rt.api.set('value:redPotion', 130);
+        expect(rt.state.values.redPotion).toBe(130);
+        expect(rt.data.tower.values.redPotion).toBe(100);
+
+        expect(rt.save()).toBe(true);
+        rt.api.set('value:redPotion', 999);
+        expect(rt.load()).toBe(true);
+        expect(rt.api.get('value:redPotion')).toBe(130); // 存档里的值回来了
+    });
+
+    test('reset 回到开局状态：勇士 / flags / values / 录像都重置', () => {
+        const storage = memStorage();
+        const rt = new MotaRuntime(data, storage);
+        rt.move(-1, 0); // 拿钥匙，录像里留一步
+        rt.api.set('value:redPotion', 777);
+        rt.state.flags.hard = 3;
+        rt.visitFloor('f2');
+
+        rt.reset();
+        expect(rt.state.hero.items.tools.yellowKey).toBeUndefined();
+        expect(rt.state.values.redPotion).toBe(100);
+        expect(rt.state.flags.hard).toBeUndefined();
+        expect(rt.state.flags.__visited__).toBeUndefined();
+        expect(rt.route.route).toEqual([]);
+        // 重置后图块也回到开局（钥匙又能拿）
+        expect(rt.move(-1, 0).action).toBe('item');
     });
 
     test('api 暴露移动、存档与道具操作', () => {

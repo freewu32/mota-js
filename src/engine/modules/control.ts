@@ -22,7 +22,6 @@ import {
     isEnemy,
     isItem,
     isPassable,
-    removeBlock,
     type Block,
 } from './maps';
 import { addStatus, hasFlag, setFlag, triggerDebuff, type DebuffType } from './status';
@@ -223,9 +222,19 @@ export class MotaControl {
 
         const block = this.blockAt(x, y);
         if (block && !block.disable) {
-            if (isDoor(block.event)) {
+            // 只有 `trigger: 'openDoor'` 的门才在碰撞时开启（旧 `core.trigger` →
+            // `doSystemEvent('openDoor')`）。墙 / 冰 / 暗墙同样带 `doorInfo`，
+            // 但 trigger 为空：它们要靠破墙镐 / 破冰镐的 `useItemEffect`
+            // （旧版同样是走进墙里什么都不发生）。
+            if (isDoor(block.event) && block.event.trigger === 'openDoor') {
                 const opened = this.openDoor(block);
-                return { moved: false, action: opened ? 'door' : 'none', x, y };
+                return {
+                    moved: false,
+                    action: opened ? 'door' : 'none',
+                    x,
+                    y,
+                    tip: opened ? undefined : this.doorFailureTip(block),
+                };
             }
             if (isEnemy(block.event)) {
                 // 战前剧本：推迟战斗（旧 `_sys_battle` 里 push beforeBattle + battle）
@@ -265,6 +274,22 @@ export class MotaControl {
         }
 
         return { moved: true, action: 'move', x, y };
+    }
+
+    /** 开门失败时的提示（旧 `_openDoor_check` 的 `drawTip`） */
+    private doorFailureTip(block: Block): string {
+        const keys =
+            (block.event.doorInfo as { keys?: Record<string, number> } | undefined)?.keys ?? {};
+        for (const rawKey of Object.keys(keys)) {
+            const keyName = rawKey.endsWith(':o') ? rawKey.slice(0, -2) : rawKey;
+            const item = this.ctx.items[keyName];
+            // 未定义的道具（如样板里没定义 specialKey）：旧版同样直接判定无法开启
+            if (!item) return '无法开启此门';
+            if (itemCount(this.ctx.hero, keyName) < (keys[rawKey] ?? 0)) {
+                return `你的${item.name ?? '钥匙'}不足！`;
+            }
+        }
+        return '无法开启此门';
     }
 
     /** 打开门；成功返回 true，并扣钥匙、移除图块 */
@@ -415,8 +440,21 @@ export class MotaControl {
         return first == null ? null : first;
     }
 
+    /**
+     * 移除 / 显示图块（旧 `core.removeBlock` / `core.showBlock`）。
+     *
+     * 图块的 disable 状态与存档里的 `__block_<floor>_<x>_<y>__` flag 必须同步，
+     * 否则读档后（block 缓存按 flag 重建）会丢掉这一步。塔作者脚本里的
+     * `removeBlock` / `hide` / `show` / `openDoor` 都走这里。
+     */
+    setBlockDisabled(block: Block, disabled = true, floorId = this.ctx.floorId): void {
+        block.disable = disabled;
+        const name = `__block_${floorId}_${block.x}_${block.y}__`;
+        if (disabled) setFlag(this.ctx.flags, name, true);
+        else delete this.ctx.flags[name];
+    }
+
     private disableBlock(block: Block): void {
-        removeBlock(this.blocks, block.x, block.y);
-        setFlag(this.ctx.flags, `__block_${this.ctx.floorId}_${block.x}_${block.y}__`, true);
+        this.setBlockDisabled(block, true);
     }
 }

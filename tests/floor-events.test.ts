@@ -81,6 +81,7 @@ describe('FloorEvents 调度', () => {
             floorId: () => 'f1',
             getFloor: (id) => floors[id],
             insert: (actions, x) => void inserted.push({ actions, x }),
+            autoEventLoc: () => {},
             evaluate: (condition) => condition === 'flag:ok == 1' && flags.ok === 1,
             getFlag: (name, fallback) => flags[name] ?? fallback,
             setFlag: (name, value) => void (flags[name] = value),
@@ -97,6 +98,27 @@ describe('FloorEvents 调度', () => {
             { actions: ['first', 'each'], x: undefined },
             { actions: ['each'], x: undefined },
         ]);
+    });
+
+    test('checkAutoEvents：把自动事件坐标交给事件流（旧 `pushEventLoc`）', () => {
+        const flags: Record<string, unknown> = {};
+        const locs: [number | null, number | null, string][] = [];
+        const events = new FloorEvents({
+            floorIds: ['f1'],
+            floorId: () => 'f1',
+            getFloor: () => ({
+                autoEvent: {
+                    '3,4': { 0: { condition: 'true', data: [{ type: 'openDoor' }] } },
+                },
+            }),
+            insert: () => {},
+            autoEventLoc: (x, y, floorId) => void locs.push([x, y, floorId]),
+            evaluate: () => true,
+            getFlag: (name, fallback) => flags[name] ?? fallback,
+            setFlag: (name, value) => void (flags[name] = value),
+        });
+        events.checkAutoEvents();
+        expect(locs).toEqual([[3, 4, 'f1']]);
     });
 
     test('after 带坐标插入', () => {
@@ -147,6 +169,7 @@ describe('FloorEvents 调度', () => {
                 floorId: id,
             }),
             insert: (actions) => void inserted.push(actions),
+            autoEventLoc: () => {},
             evaluate: () => true,
             getFlag: (name, fallback) => flags[name] ?? fallback,
             setFlag: (name, value) => void (flags[name] = value),

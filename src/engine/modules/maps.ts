@@ -167,6 +167,24 @@ export interface ExtractOptions {
     isDisabled?: (x: number, y: number) => boolean | undefined;
 }
 
+/** 已提醒过的「带 script 字段的图块」，避免同一次游玩里反复刷控制台 */
+const scriptWarned = new Set<string>();
+
+/**
+ * 旧塔会把一段 JS 存在图块属性里（`block.event.script`），踩上去时 `eval` 执行。
+ * 3.0 不做 `eval`，这类图块不会生效（样板的血网 / 毒网 / 衰网 / 咒网 / 光源就是），
+ * 这里只提醒一次，避免迁移后惄惄惄地丢功能。
+ */
+function warnUnsupportedScript(floorId: string, x: number, y: number, id: string): void {
+    const key = `${floorId}@${x},${y}`;
+    if (scriptWarned.has(key)) return;
+    scriptWarned.add(key);
+    console.warn(
+        `[mota] 图块 ${id}（${floorId} ${x},${y}）带有旧版的 script 字段，3.0 不会执行它` +
+            '（无 eval）。请把这段逻辑改写成数据 / 钩子，见 _docs/script3.md 的「图块脚本与 checkBlock」。',
+    );
+}
+
 /** 剧本事件可写成字符串、事件数组或对象；统一为对象形式 */
 function normalizeScriptEvent(raw: unknown): BlockEvent | undefined {
     if (raw == null) return undefined;
@@ -232,6 +250,9 @@ export function extractBlocks(floor: FloorData, maps: Maps, options: ExtractOpti
             const disabled =
                 options.isDisabled?.(x, y) ??
                 (scriptEvent?.enable != null ? !scriptEvent.enable : undefined);
+            if (typeof event.script === 'string' && event.script.length > 0) {
+                warnUnsupportedScript(floor.floorId, x, y, event.id ?? String(event.cls));
+            }
             const block: Block = { x, y, id: number, event };
             if (disabled != null) block.disable = disabled;
             if (scriptEvent?.opacity != null) block.event.opacity = scriptEvent.opacity;

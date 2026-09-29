@@ -175,7 +175,16 @@ function render(): void {
     fx.resize(width, height, ratio);
     const override = fx.heroOverride;
     const hero = override ? { x: override.x, y: override.y } : runtime.state.hero;
-    drawScene(gameCtx, runtime.floor, data.maps, hero, materials, animate, heroImage == null);
+    drawScene(
+        gameCtx,
+        runtime.floor,
+        data.maps,
+        hero,
+        materials,
+        animate,
+        heroImage == null,
+        runtime.getBlocks(runtime.state.floorId),
+    );
     if (heroImage) {
         // 跟随者画在勇士之前，保证勇士在最上层（旧版按 y 排序，这里简化）
         const followers = followerSprites();
@@ -494,6 +503,8 @@ const ctx: GameContext = {
             ? (data.tower.main.levelChoose as { hard?: number; action?: unknown }[])
             : [];
         const level = levels[levelIndex];
+        // 新开一局：先回到初始状态（旧 `core.resetGame`），再跑难度的开局剧本
+        runtime.reset();
         const actions: unknown[] = [];
         if (level) {
             if (typeof level.hard === 'number') runtime.state.flags.hard = level.hard;
@@ -636,4 +647,10 @@ function loop(now: number): void {
 requestAnimationFrame(loop);
 
 // 暴露运行时，便于调试与接入脚本 API
-Object.assign(globalThis, { mota: runtime, motaApi: runtime.api, motaDialog: dialog, motaFx: fx });
+// 调试用全局。`motaApi` 用 getter：API 是每次访问重建的快照，直接取值会把
+// `floorId` 冻结在页面加载时的楼层上。
+Object.assign(globalThis, { mota: runtime, motaDialog: dialog, motaFx: fx });
+Object.defineProperty(globalThis, 'motaApi', {
+    configurable: true,
+    get: () => runtime.api,
+});

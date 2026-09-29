@@ -70,6 +70,68 @@ describe('drawScene', () => {
         expect(calls.filter((c) => c === 'fillRect').length).toBe(1); // 只有 tileId 为 0 的格子
     });
 
+    test('运行时图块：已移除的不画，setBlock 过的按新图块画', () => {
+        const drawn: string[] = [];
+        const painter: TilePainter = {
+            drawElement: (_ctx, element) => {
+                drawn.push(element.id ?? '');
+                return true;
+            },
+            drawAutotile: () => true,
+        };
+        // floor 里 9 格全是 ground；运行时只剩左上角一格，另外关掉了两格、多了一个宝箱
+        const blocks = [
+            { x: 0, y: 0, id: 1, event: { cls: 'terrains', id: 'ground' } },
+            { x: 1, y: 0, id: 1, event: { cls: 'terrains', id: 'ground' }, disable: true },
+            { x: 2, y: 0, id: 1, event: { cls: 'terrains', id: 'ground' }, disable: true },
+            { x: 1, y: 1, id: 9, event: { cls: 'animates', id: 'box' } },
+        ];
+        const { ctx, calls } = recordingCtx();
+        drawScene(ctx, floor, maps, { x: 1, y: 1 }, painter, 0, false, blocks);
+
+        expect(drawn).toEqual(['ground', 'box']);
+        // 其余 7 格退回空地色块
+        expect(calls.filter((c) => c === 'fillRect').length).toBe(7);
+    });
+
+    test('运行时图块：autotile 的连通性用运行时地图', () => {
+        const mapWithHole = [
+            [20, 0],
+            [20, 20],
+        ];
+        const floorWithHole: FloorData = { floorId: 'a', title: 't', name: 'n', map: mapWithHole };
+        const seen: number[][] = [];
+        const painter: TilePainter = {
+            drawElement: () => false,
+            drawAutotile: (_ctx, _element, x, y, mapArr) => {
+                seen.push([x, y, mapArr[y]?.[x] ?? 0]);
+                return true;
+            },
+        };
+        const blocks = [
+            { x: 0, y: 0, id: 20, event: { cls: 'autotile', id: 'autotile' } },
+            { x: 0, y: 1, id: 20, event: { cls: 'autotile', id: 'autotile' } },
+            { x: 1, y: 1, id: 20, event: { cls: 'autotile', id: 'autotile' } },
+        ];
+        const { ctx } = recordingCtx();
+        drawScene(
+            ctx,
+            floorWithHole,
+            { '20': { cls: 'autotile', id: 'autotile' } },
+            { x: 0, y: 0 },
+            painter,
+            0,
+            false,
+            blocks,
+        );
+        // 只画运行时存在的三格，且传给 painter 的邻居表也是运行时的
+        expect(seen).toEqual([
+            [0, 0, 20],
+            [0, 1, 20],
+            [1, 1, 20],
+        ]);
+    });
+
     test('autotile 图块走 drawAutotile 分支', () => {
         const map = [
             [20, 20],

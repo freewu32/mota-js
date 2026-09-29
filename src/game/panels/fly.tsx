@@ -47,7 +47,17 @@ function drawFloor(canvas: HTMLCanvasElement, ctx: GameContext, floorId: string)
         floorId === ctx.runtime.state.floorId
             ? { x: ctx.runtime.state.hero.x, y: ctx.runtime.state.hero.y }
             : { x: -1, y: -1 };
-    drawScene(context, floor, ctx.runtime.data.maps, hero, ctx.materials, 0);
+    // 与游戏内地图一致：按运行时状态画（已拾取的道具 / 已打开的门不会再显示）
+    drawScene(
+        context,
+        floor,
+        ctx.runtime.data.maps,
+        hero,
+        ctx.materials,
+        0,
+        true,
+        ctx.runtime.getBlocks(floorId),
+    );
 }
 
 function FloorThumb({ ctx, floorId }: { ctx: GameContext; floorId: string }) {

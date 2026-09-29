@@ -1,4 +1,5 @@
 import type { FloorData, MapElement, Maps } from '../shared/data/schema';
+import type { Block } from './modules/maps';
 import { TILE, TILESET_START_OFFSET } from './tiles';
 
 export { TILE };
@@ -57,7 +58,14 @@ export function resolveElement(maps: Maps, tileId: number): MapElement | undefin
     return undefined;
 }
 
-/** 绘制一层地图与英雄；有素材时使用真实图块，否则回退为色块 */
+/**
+ * 绘制一层地图与英雄；有素材时使用真实图块，否则回退为色块。
+ *
+ * `blocks` 是运行时的图块列表（`runtime.getBlocks(floorId)`）：给了它就按运行时状态绘制
+ * ——已拾取的道具、已打开的门、已击败的怪物、已被镐子破坏的墙与 `setBlock` 过的格子都会
+ * 跟着变（旧版画的就是 `core.status.maps`，而不是楼层原始数据）；不给则退回静态楼层数据，
+ * 适合预览与测试。
+ */
 export function drawScene(
     ctx: CanvasRenderingContext2D,
     floor: FloorData,
@@ -67,22 +75,40 @@ export function drawScene(
     animate = 0,
     /** 是否画勇士（有精灵图时由调用方关掉内置圆点） */
     drawHero = true,
+    /** 运行时图块（含 `disable`）；不给时按静态楼层数据画 */
+    blocks?: readonly Block[],
 ): void {
     const rows = floor.map;
+    const height = rows.length;
+    const width = rows[0]?.length ?? 0;
+    // 运行时状态表：被移除（disable）的图块不画，格子退回空地
+    const live = blocks ? blockGrid(blocks, width, height) : null;
+    // autotile 的连通性也要看运行时地图：墙被打掉后相邻的 autotile 要重新分边
+    const grid = live ? live.map((row) => row.map((block) => block?.id ?? 0)) : rows;
 
-    for (let y = 0; y < rows.length; y++) {
-        const row = rows[y];
-        if (!row) continue;
-        for (let x = 0; x < row.length; x++) {
-            const tileId = row[x] ?? 0;
-            const element = resolveElement(maps, tileId);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const block = live?.[y]?.[x];
+            const tileId = live ? (block?.id ?? 0) : (rows[y]?.[x] ?? 0);
+            const element = live
+                ? (block?.event as MapElement | undefined)
+                : resolveElement(maps, tileId);
 
             let drawn = false;
             if (element && materials) {
-                drawn =
-                    element.cls === 'autotile'
-                        ? materials.drawAutotile(ctx, element, x, y, rows, animate)
-                        : materials.drawElement(ctx, element, x, y, animate);
+                // 图块透明度（旧 `block.opacity`，由楼层剧本的 `opacity` 给出）
+                const opacity = (element as Record<string, unknown>).opacity;
+                const alpha = typeof opacity === 'number' ? Math.max(0, Math.min(1, opacity)) : 1;
+                if (alpha <= 0) {
+                    drawn = true;
+                } else {
+                    if (alpha < 1) ctx.globalAlpha = alpha;
+                    drawn =
+                        element.cls === 'autotile'
+                            ? materials.drawAutotile(ctx, element, x, y, grid, animate)
+                            : materials.drawElement(ctx, element, x, y, animate);
+                    ctx.globalAlpha = 1;
+                }
             }
 
             if (!drawn) {
@@ -105,6 +131,23 @@ export function drawScene(
     ctx.beginPath();
     ctx.arc(hero.x * TILE + TILE / 2, hero.y * TILE + TILE / 2, TILE * 0.35, 0, Math.PI * 2);
     ctx.fill();
+}
+
+/** 把运行时图块摆成二维表（`disable` 的格子留空） */
+function blockGrid(
+    blocks: readonly Block[],
+    width: number,
+    height: number,
+): (Block | undefined)[][] {
+    const grid: (Block | undefined)[][] = [];
+    for (let y = 0; y < height; y++) grid.push(new Array<Block | undefined>(width).fill(undefined));
+    for (const block of blocks) {
+        if (block.disable) continue;
+        const row = grid[block.y];
+        if (!row || block.x < 0 || block.x >= width) continue;
+        row[block.x] = block;
+    }
+    return grid;
 }
 
 /**

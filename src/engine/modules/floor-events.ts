@@ -38,6 +38,8 @@ export interface FloorEventsHost {
     getFloor(floorId: string): Record<string, unknown> | undefined;
     /** 插入一段事件（旧 `insertAction`） */
     insert(actions: unknown, x?: number | null, y?: number | null): void;
+    /** 让后续无 loc 的动作以该坐标为基准（旧 `core.pushEventLoc`） */
+    autoEventLoc(x: number | null, y: number | null, floorId: string): void;
     /** 求值 autoEvent 的 condition */
     evaluate(condition: unknown, prefix: string): boolean;
     getFlag(name: string, fallback: unknown): unknown;
@@ -191,8 +193,15 @@ export class FloorEvents {
                 { type: 'dowhile', condition: 'false', data: autoEvent.data },
                 reset,
             ];
+            // 旧 `checkAutoEvents` 在数据前 `pushEventLoc(x, y, floorId)`：没有 loc 的
+            // 动作（如 `openDoor`）要用自动事件自己的坐标。
+            const at =
+                autoEvent.x == null && autoEvent.y == null
+                    ? ([null, null] as const)
+                    : ([autoEvent.x, autoEvent.y] as const);
             if (autoEvent.delayExecute) delayed.push(...wrapped);
             else todos.push(...wrapped);
+            if (at[0] != null || at[1] != null) this.host.autoEventLoc(at[0], at[1], autoEvent.floorId);
         }
         const all = [...todos, ...delayed];
         if (all.length > 0) this.host.insert(all);

@@ -69,6 +69,8 @@ export interface GameApiHost {
     insertAction(actions: ScriptAction | ScriptAction[]): void;
     /** 换层（`floorId` 为 null 表示留在本层） */
     changeFloor(floorId: string | null, loc?: [number, number] | null, direction?: string): void;
+    /** 标记某格图块已移除 / 恢复（同时写入存档 flag），返回该格是否原本有图块 */
+    setBlockDisabled(floorId: string, x: number, y: number, disabled: boolean): boolean;
     setBlock(floorId: string, x: number, y: number, numberOrId: number | string): void;
     addItem(id: string, count?: number): void;
     removeItem(id: string, count?: number): boolean;
@@ -277,10 +279,10 @@ export function createGameApi(host: GameApiHost): GameApi {
                 (block) => block.event.id === idOrCls || block.event.cls === idOrCls,
             ),
         removeBlock: (x, y, floorId) => {
+            // 该格原本没有图块（已被移除）时返回 false（旧 `core.removeBlock` 的返回值）
             const block = findBlock(x, y, floorId);
-            if (!block) return false;
-            block.disable = true;
-            return true;
+            if (!block || block.disable) return false;
+            return host.setBlockDisabled(floorId ?? host.floorId, x, y, true);
         },
         setBlock: (x, y, numberOrId, floorId) =>
             host.setBlock(floorId ?? host.floorId, x, y, numberOrId),

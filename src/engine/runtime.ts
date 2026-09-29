@@ -35,7 +35,7 @@ import {
     turnDirection,
 } from './modules/events';
 import { formatBigNumber } from './modules/format';
-import { extractBlocks, isDoor, isEnemy, isItem, type Block } from './modules/maps';
+import { extractBlocks, type Block } from './modules/maps';
 import { getStatusOrDefault } from './modules/status';
 import {
     formatEquipPanel,
@@ -175,17 +175,11 @@ export class MotaRuntime {
         this.data = data;
         this.storage = storage;
 
-        const firstData = data.tower.firstData;
-        const hero = normalizeHero(firstData.hero);
-        this.state = {
-            floorId: firstData.floorId,
-            hero,
-            flags: { ...(data.tower.flags as Record<string, unknown>) },
-        };
+        this.state = this.initialState();
 
         const ctx: ControlContext = {
             maps: data.maps,
-            values: data.tower.values as Record<string, unknown>,
+            values: this.state.values,
             flags: this.state.flags,
             enemys: data.enemys,
             items: data.items,
@@ -254,6 +248,8 @@ export class MotaRuntime {
             floorId: () => this.state.floorId,
             getFloor: (id) => this.data.floors[id] as Record<string, unknown> | undefined,
             insert: (actions, x, y) => this.events.insert(actions, x, y),
+            // 旧 `core.pushEventLoc`：自动事件里没有 loc 的动作以该坐标为基准
+            autoEventLoc: (x, y, floorId) => this.events.setEventLoc(x, y, floorId),
             evaluate: (condition, prefix) =>
                 evaluateCondition(condition, this.valueScope(prefix), prefix),
             getFlag: (name, fallback) => this.getFlag(name, fallback),
@@ -400,13 +396,51 @@ export class MotaRuntime {
     }
 
     /**
+     * 把 block 缓存绑定到当前 `state.flags`。
+     *
+     * 缓存里的 `Block.disable` 是**建缓存时**从 flags 读的，所以凡是整体替换
+     * `state` 的操作（读档 / 重开）都必须重建，否则地图会停留在上一局的
+     * 「已吃掉的物品 / 已打开的门」上。
+     */
+    private clearBlockCache(): void {
+        for (const key of Object.keys(this.blockCache)) delete this.blockCache[key];
+    }
+
+    /** 开局状态（旧 `resetGame`）：初始楼层 + 初始勇士 + 塔的 flags / values 克隆 */
+    private initialState(): GameState {
+        const firstData = this.data.tower.firstData;
+        return {
+            floorId: firstData.floorId,
+            hero: normalizeHero(firstData.hero),
+            flags: { ...(this.data.tower.flags as Record<string, unknown>) },
+            values: { ...(this.data.tower.values as Record<string, unknown>) },
+        };
+    }
+
+    /**
+     * 重开一局（旧 `core.resetGame`）：状态回到初始值，录像清空。
+     * 开局流程是 `reset()` + `start()`；`start()` 单独调用只重跑初始楼层的
+     * 抵达事件，不会重置进度。
+     */
+    reset(): void {
+        this.state = this.initialState();
+        this.clearBlockCache();
+        this.route.route = [];
+        this.route.clearFolding();
+        this.control.ctx.hero = this.state.hero;
+        this.control.ctx.floorId = this.state.floorId;
+        this.control.ctx.flags = this.state.flags;
+        this.control.ctx.values = this.state.values;
+    }
+
+    /**
      * 值块求值上下文（旧 `core` 里散落的 status/flags/hero 组合）。
      * 事件、状态栏与塔作者脚本共用同一份作用域。
      */
     valueScope(prefix?: string): ValueScope {
         return {
             flags: this.state.flags,
-            values: this.data.tower.values as Record<string, unknown>,
+            values: this.state.values,
             globals: this.globals,
             hero: this.state.hero,
             enemys: this.data.enemys as Record<string, unknown>,
@@ -506,7 +540,7 @@ export class MotaRuntime {
         return {
             hero: this.state.hero,
             flags: this.state.flags,
-            values: this.data.tower.values as Record<string, unknown>,
+            values: this.state.values,
             items: this.data.items as Record<string, ApiItemData>,
             enemys: this.data.enemys as Record<string, unknown>,
             floorId: this.state.floorId,
@@ -531,6 +565,12 @@ export class MotaRuntime {
                 void this.events.start([
                     { type: 'setBlock', number: numberOrId, loc: [[x, y]], floorId },
                 ]),
+            setBlockDisabled: (floorId, x, y, disabled) => {
+                const block = this.getBlocks(floorId).find((one) => one.x === x && one.y === y);
+                if (!block) return false;
+                this.control.setBlockDisabled(block, disabled, floorId);
+                return true;
+            },
             addItem: (id, count) => this.items.add(id, count),
             removeItem: (id, count) => this.items.remove(id, count),
             useItem: (id) => this.items.use(id),
@@ -610,16 +650,11 @@ export class MotaRuntime {
         const targetY = ctx.hero.y + dy;
         const block = this.control.blockAt(targetX, targetY);
 
-        // 剧本事件块（NPC / 告示牌等）：面向目标并执行剧本，勇士不移动
-        if (
-            block &&
-            !block.disable &&
-            block.event.trigger === 'action' &&
-            block.event.data != null &&
-            !isEnemy(block.event) &&
-            !isDoor(block.event) &&
-            !isItem(block.event)
-        ) {
+        // 剧本事件块（NPC / 告示牌 / 挂了事件的怪物图块等）：面向目标并执行剧本，勇士不移动。
+        // 与旧 `events.trigger` 一致：只要图块的 trigger 是 action（`extractBlocks` 在挂上剧本
+        // 数据时设为 action），就优先跑事件，哪怕它的 cls 是敌人 / 门 / 道具
+        // （样板里的「事件编辑器」演示就在 enemy48 图块上挂了 action 事件）。
+        if (block && !block.disable && block.event.trigger === 'action' && block.event.data != null) {
             if (dy < 0) ctx.hero.direction = 'up';
             else if (dy > 0) ctx.hero.direction = 'down';
             else if (dx < 0) ctx.hero.direction = 'left';
@@ -657,7 +692,16 @@ export class MotaRuntime {
         // 旧引擎对每次移动尝试都记录方向（含被挡住的情况）
         this.route.record(this.control.ctx.hero.direction);
         // 即捡即用类道具的提示（旧 `drawTip(getItemEffectTip())`）
-        if (result.tip) this.events.host.presenter.tip?.(result.tip);
+        if (result.tip) {
+            this.events.host.presenter.tip?.(result.tip);
+            // 开门失败（钥匙不足 / 未定义钥匙）时旧版会响“操作失败”
+            if (result.action === 'none') {
+                this.events.host.presenter.effect?.('playSound', {
+                    type: 'playSound',
+                    name: '操作失败',
+                });
+            }
+        }
         return result;
     }
 
@@ -962,13 +1006,18 @@ export class MotaRuntime {
                 floorId: parsed.floorId,
                 hero: parsed.hero,
                 flags: parsed.flags,
+                // 旧存档没有 values：退回塔的初始值，而不是 undefined
+                values: parsed.values ?? { ...(this.data.tower.values as Record<string, unknown>) },
             };
             this.route.route = decodeRoute(parsed.route, routeCodecFor(this.data.maps));
             this.route.clearFolding();
+            // block 缓存里存着上一局的 disable 状态，换 state 后必须重建
+            this.clearBlockCache();
             // 重新绑定 control 的可变引用
             this.control.ctx.hero = this.state.hero;
             this.control.ctx.floorId = this.state.floorId;
             this.control.ctx.flags = this.state.flags;
+            this.control.ctx.values = this.state.values;
             // 读档不重跑 firstArrive / eachArrive（旧 `__fromLoad__` 分支），
             // 但要让呈现层把 BGM / 天气 / 色调切到读档后的楼层
             this.events.host.presenter.effect?.('changeFloor', {
