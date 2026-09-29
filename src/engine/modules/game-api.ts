@@ -72,6 +72,18 @@ export interface GameApiHost {
     /** 标记某格图块已移除 / 恢复（同时写入存档 flag），返回该格是否原本有图块 */
     setBlockDisabled(floorId: string, x: number, y: number, disabled: boolean): boolean;
     setBlock(floorId: string, x: number, y: number, numberOrId: number | string): void;
+    /**
+     * 移动图块（旧 `core.moveBlock`）：起点图块立刻消失，沿 `steps` 逐格移动，
+     * `keep` 为真时落在终点、否则淡出。返回 false 表示起点没有图块。
+     */
+    moveBlock(
+        x: number,
+        y: number,
+        steps: unknown,
+        time?: number,
+        keep?: boolean,
+        done?: () => void,
+    ): boolean;
     addItem(id: string, count?: number): void;
     removeItem(id: string, count?: number): boolean;
     useItem(id: string): boolean;
@@ -153,6 +165,8 @@ export interface GameApi {
     /** 移除某点图块（旧 `core.removeBlock`）；返回是否真的移除了 */
     removeBlock(x: number, y: number, floorId?: string): boolean;
     setBlock(x: number, y: number, numberOrId: number | string, floorId?: string): void;
+    /** 移动图块（旧 `core.moveBlock`）；返回 false 表示起点没有图块 */
+    moveBlock(x: number, y: number, steps: unknown, time?: number, keep?: boolean): boolean;
 
     /* —— 楼层与剧本 —— */
     changeFloor(floorId: string | null, loc?: [number, number] | null, direction?: string): void;
@@ -286,6 +300,7 @@ export function createGameApi(host: GameApiHost): GameApi {
         },
         setBlock: (x, y, numberOrId, floorId) =>
             host.setBlock(floorId ?? host.floorId, x, y, numberOrId),
+        moveBlock: (x, y, steps, time, keep) => host.moveBlock(x, y, steps, time, keep),
 
         changeFloor: (floorId, loc = null, direction) => host.changeFloor(floorId, loc, direction),
         runAction: (actions) => host.runAction(actions),

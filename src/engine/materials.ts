@@ -170,6 +170,25 @@ export class MaterialStore {
     }
 
     /**
+     * 绘制脱离地图的图块（旧 `_initDetachedBlock` 的脱离画布）：
+     * 图块移动动画途中用，`px / py` 是像素坐标（可以为小数）。
+     *
+     * autotile 不再看地图连通（找不到邻居，按孤立图块画）。
+     */
+    drawDetached(
+        ctx: CanvasRenderingContext2D,
+        element: MapElement,
+        px: number,
+        py: number,
+        animate = 0,
+    ): boolean {
+        if (element.cls === 'autotile') {
+            return this.drawAutotile(ctx, element, px / TILE, py / TILE, [[0]], animate);
+        }
+        return this.drawElement(ctx, element, px / TILE, py / TILE, animate);
+    }
+
+    /**
      * 构建 autotile 连通表：像素完全相同的图块视为同一自动元件。
      * 需要 canvas 采样，非浏览器环境（如测试）跳过，退化为仅自身连通。
      */

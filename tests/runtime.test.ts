@@ -110,6 +110,17 @@ const data: RuntimeData = {
     },
 };
 
+/**
+ * 按 50ms 步长推进运行时（每帧 dt 上限 100ms，与游戏层主循环一致）。
+ */
+function advance(rt: MotaRuntime, ms: number): void {
+    let elapsed = 0;
+    while (elapsed < ms) {
+        elapsed += 50;
+        rt.update(elapsed);
+    }
+}
+
 function memStorage(): StorageLike & { map: Map<string, string> } {
     const map = new Map<string, string>();
     return {
@@ -255,6 +266,67 @@ describe('MotaRuntime', () => {
         expect(rt.state.flags['__block_f1_2_2__']).toBeUndefined();
         void rt.events.start([{ type: 'hide', loc: [[2, 2]] }]);
         expect(rt.state.flags['__block_f1_2_2__']).toBe(true);
+    });
+
+    test('move 动作：图块立刻离开起点，keep 时落在终点并等动画结束', () => {
+        const rt = new MotaRuntime(data, null);
+        const texts: string[] = [];
+        rt.setPresenter({
+            text: (text, _data, done) => {
+                texts.push(text);
+                done();
+            },
+        });
+        // (0,2) 是上楼楼梯：右移两格到 (2,2)，keep 落地
+        rt.events.start([
+            { type: 'move', loc: [0, 2], steps: ['right:2'], time: 160, keep: true },
+            '跑掉了',
+        ]);
+        // 起点立刻空出，图块进入移动状态
+        expect(rt.getBlocks('f1').find((b) => b.x === 0 && b.y === 2)?.disable).toBe(true);
+        expect(rt.movingBlocks.size).toBe(1);
+        // 动画没结束时事件流停在 move 之后
+        expect(texts).toEqual([]);
+
+        // 每格 160ms：推进 320ms 后动画结束，事件流继续
+        expect(rt.update(0)).toBe(true);
+        advance(rt, 350);
+        expect(rt.movingBlocks.size).toBe(0);
+        expect(rt.getBlocks('f1').find((b) => b.x === 2 && b.y === 2)?.disable).not.toBe(true);
+        expect(texts).toEqual(['跑掉了']);
+    });
+
+    test('move 动作：不 keep 时淡出消失，起点不会回来', () => {
+        const rt = new MotaRuntime(data, null);
+        rt.events.start([{ type: 'move', loc: [0, 2], steps: ['down:1'], time: 160, async: true }]);
+        rt.update(0);
+        advance(rt, 160);
+        // 一格走完，接着淡出（每个小步 -0.06）
+        expect(rt.movingBlocks.size).toBe(1);
+        advance(rt, 400);
+        expect(rt.movingBlocks.size).toBe(0);
+        expect(rt.getBlocks('f1').find((b) => b.x === 0 && b.y === 2)?.disable).toBe(true);
+    });
+
+    test('换层 / 读档会丢掉进行中的图块移动', () => {
+        const storage = memStorage();
+        const rt = new MotaRuntime(data, storage);
+        rt.events.start([
+            { type: 'move', loc: [0, 2], steps: ['right:4'], time: 160, async: true },
+        ]);
+        expect(rt.movingBlocks.size).toBe(1);
+        // 剧本换层（flyTo 需要到过该层，这里直接用换层动作）
+        rt.events.start([{ type: 'changeFloor', floorId: 'f2', loc: [1, 1] }]);
+        expect(rt.movingBlocks.size).toBe(0);
+
+        const rt2 = new MotaRuntime(data, storage);
+        rt2.events.start([
+            { type: 'move', loc: [0, 2], steps: ['right:4'], time: 160, async: true },
+        ]);
+        expect(rt2.movingBlocks.size).toBe(1);
+        rt2.save();
+        expect(rt2.load()).toBe(true);
+        expect(rt2.movingBlocks.size).toBe(0);
     });
 
     test('开门失败时给出提示（无法开启 / 钥匙不足）', () => {

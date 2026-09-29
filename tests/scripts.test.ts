@@ -190,6 +190,10 @@ function makeApi(): ApiHarness {
             return true;
         },
         addItem: () => {},
+        moveBlock: (x, y, steps, time, keep) => {
+            removed.push(`moveBlock:${x},${y}:${JSON.stringify(steps)}:${time}:${keep}`);
+            return true;
+        },
         removeItem: () => true,
         useItem: () => true,
         canUseItem: () => true,

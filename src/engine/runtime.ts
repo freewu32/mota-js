@@ -36,6 +36,7 @@ import {
 } from './modules/events';
 import { formatBigNumber } from './modules/format';
 import { extractBlocks, type Block } from './modules/maps';
+import { MovingBlocks } from './modules/move-block';
 import { getStatusOrDefault } from './modules/status';
 import {
     formatEquipPanel,
@@ -70,6 +71,11 @@ export interface StorageLike {
 }
 
 const SAVE_KEY = 'mota-save-v3';
+
+/** 当前时间戳（无 `performance` 的环境退回 `Date.now`） */
+function nowMs(): number {
+    return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
 
 function defaultStorage(): StorageLike | null {
     try {
@@ -160,12 +166,16 @@ export class MotaRuntime {
     readonly shops: MotaShops;
     /** 塔作者 UI 钩子（`mota.ui.register`） */
     readonly uiHooks = new UiHookRegistry();
+    /** 正在移动的图块（旧 `core.moveBlock` 的脱离画布动画） */
+    readonly movingBlocks: MovingBlocks;
     private readonly storage: StorageLike | null;
     private readonly control: MotaControl;
     private readonly globals: Record<string, unknown> = {};
     /** 塔作者脚本注入的函数（`function` 动作与表达式共用） */
     readonly functions: Record<string, (...args: unknown[]) => unknown> = {};
     private readonly blockCache: Record<string, Block[]> = {};
+    /** 上一帧时间（图块移动动画的计时基准）；null 表示还没收到第一帧 */
+    private lastUpdate: number | null = null;
     private scriptLoader: ScriptLoader | null = null;
     constructor(
         data: RuntimeData,
@@ -176,6 +186,21 @@ export class MotaRuntime {
         this.storage = storage;
 
         this.state = this.initialState();
+
+        this.movingBlocks = new MovingBlocks({
+            takeBlock: (x, y, floorId) => {
+                const block = this.getBlocks(floorId).find(
+                    (one) => one.x === x && one.y === y && !one.disable,
+                );
+                if (!block) return null;
+                return { element: block.event, number: block.id };
+            },
+            removeBlock: (x, y, floorId) => {
+                const block = this.getBlocks(floorId).find((one) => one.x === x && one.y === y);
+                if (block) this.control.setBlockDisabled(block, true, floorId);
+            },
+            placeBlock: (number, x, y, floorId) => this.events.setBlockAt(floorId, x, y, number),
+        });
 
         const ctx: ControlContext = {
             maps: data.maps,
@@ -223,6 +248,9 @@ export class MotaRuntime {
             // 剧本换层要让运行时的楼层状态一起走，否则 `runtime.floor` / 存档会落后
             changeFloor: (floorId, loc, direction) =>
                 this.applyFloorChange(floorId, loc, direction),
+            // 剧本里的 `{ type: 'move' }` 交给运行时带动画执行（旧 `core.moveBlock`）
+            moveBlock: (x, y, steps, time, keep, done) =>
+                this.movingBlocks.start(x, y, steps, time, keep, this.state.floorId, done),
             // 剧本发起的战斗 / 拾取，同样要跑楼层的位置事件
             onAfterBattle: (_enemyId, x, y) => this.floorEvents.after('afterBattle', x, y),
             onAfterGetItem: (_itemId, x, y) => this.floorEvents.after('afterGetItem', x, y),
@@ -299,9 +327,33 @@ export class MotaRuntime {
         this.applyFloorChange(this.state.floorId, null, null, 'start');
     }
 
-    /** 每帧驱动：检查自动事件（旧 `core.checkAutoEvents`） */
-    update(): void {
+    /**
+     * 每帧驱动：推进图块移动动画，并检查自动事件（旧 `core.checkAutoEvents`）。
+     *
+     * `now` 为毫秒时间戳（缺省取 `performance.now()`）；返回是否有正在移动的图块，
+     * 供游戏层决定要不要重绘地图层。
+     */
+    update(now: number = nowMs()): boolean {
+        const dt = this.lastUpdate == null ? 0 : Math.min(100, now - this.lastUpdate);
+        this.lastUpdate = now;
+        const moving = this.movingBlocks.update(dt);
         this.floorEvents.checkAutoEvents();
+        return moving;
+    }
+
+    /**
+     * 移动图块（旧 `core.moveBlock`）：起点图块立刻消失，沿 `steps` 逐格移动，
+     * `keep` 为真时落在终点，否则淡出。返回 false 表示起点没有图块。
+     */
+    moveBlock(
+        x: number,
+        y: number,
+        steps: unknown,
+        time = 500,
+        keep = false,
+        done?: () => void,
+    ): boolean {
+        return this.movingBlocks.start(x, y, steps, time, keep, this.state.floorId, done);
     }
 
     /**
@@ -370,6 +422,8 @@ export class MotaRuntime {
         if (direction) ctx.hero.direction = direction as Direction;
         // 换层后跟随者聚拢到新位置（旧 `changeFloor` 里的 `gatherFollowers`）
         gatherFollowers(ctx.hero.followers ?? [], ctx.hero);
+        // 旧版换层会删掉脱离画布；这里同步丢掉移动动画，并让等它的事件流继续
+        this.movingBlocks.clear();
         this.arrive(this.state.floorId, from, reason);
     }
 
@@ -425,6 +479,8 @@ export class MotaRuntime {
     reset(): void {
         this.state = this.initialState();
         this.clearBlockCache();
+        // 进行中的图块移动属于上一局，直接丢弃（事件流随后会被新的开局覆盖）
+        this.movingBlocks.clear(false);
         this.route.route = [];
         this.route.clearFolding();
         this.control.ctx.hero = this.state.hero;
@@ -571,6 +627,8 @@ export class MotaRuntime {
                 this.control.setBlockDisabled(block, disabled, floorId);
                 return true;
             },
+            moveBlock: (x, y, steps, time, keep, done) =>
+                this.movingBlocks.start(x, y, steps, time, keep, this.state.floorId, done),
             addItem: (id, count) => this.items.add(id, count),
             removeItem: (id, count) => this.items.remove(id, count),
             useItem: (id) => this.items.use(id),
@@ -1013,6 +1071,8 @@ export class MotaRuntime {
             this.route.clearFolding();
             // block 缓存里存着上一局的 disable 状态，换 state 后必须重建
             this.clearBlockCache();
+            // 上一局残留的图块移动动画同样要丢掉
+            this.movingBlocks.clear(false);
             // 重新绑定 control 的可变引用
             this.control.ctx.hero = this.state.hero;
             this.control.ctx.floorId = this.state.floorId;

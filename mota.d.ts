@@ -159,6 +159,8 @@ declare module 'mota:types' {
         searchBlocks(idOrCls: string, floorId?: string): Block[];
         removeBlock(x: number, y: number, floorId?: string): boolean;
         setBlock(x: number, y: number, numberOrId: number | string, floorId?: string): void;
+        /** 移动图块（旧 `core.moveBlock`）；返回 false 表示起点没有图块 */
+        moveBlock(x: number, y: number, steps: unknown, time?: number, keep?: boolean): boolean;
 
         /* 楼层与剧本 */
         changeFloor(floorId: string | null, loc?: [number, number] | null, direction?: string): void;

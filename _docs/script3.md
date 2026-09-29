@@ -69,6 +69,7 @@
 | `openDoor` | 开门。`loc` 指定坐标，或 `filter` 批量开门，如 `{ "type": "openDoor", "filter": { "id": "yellowDoor" } }`（大黄门钥匙）；`needKey: true` 才会检查并扣 `doorInfo.keys`，与旧引擎一致，剧本里开门默认不扣 |
 | `openPanel` | 打开面板，交给呈现层：`{ "type": "openPanel", "panel": "monsterManual" }`（怪物手册）/ `"floorMap"`（楼层传送）/ `"items"` / `"equips"` |
 | `jumpHero` | 勇士跳跃到 `loc` 或相对位移 `dxy`，位移由引擎完成、动画交给呈现层（跳跃靴） |
+| `move` | 移动图块（旧 `core.moveBlock`）：`{ "type": "move", "loc": [2, 11], "steps": ["right:2", "down:1"], "time": 750 }`。起点图块立刻消失，每格用 `time` 毫秒（默认 500，可用 `speed:32` 改），`keep: true` 时落在终点、否则淡出消失；样板 1F 的小偷就靠它跑掉。`async: true` 则不阻塞后面的对话 |
 | `triggerDebuff` | 上/解毒衰咒：`{ "type": "triggerDebuff", "action": "remove", "kind": "poison" }` |
 | `changeFloor` | 支持相对楼层：`":before"` / `":after"`（旧写法 `":next"` 同样接受），越界时停在当前层 |
 | `hide` / `show` | 隐藏 / 恢复图块（3.0 新增，等价旧 `core.removeBlock` + 重新出现） |

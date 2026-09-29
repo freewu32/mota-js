@@ -1,5 +1,6 @@
 import type { FloorData, MapElement, Maps } from '../shared/data/schema';
 import type { Block } from './modules/maps';
+import type { MovingBlock } from './modules/move-block';
 import { TILE, TILESET_START_OFFSET } from './tiles';
 
 export { TILE };
@@ -48,6 +49,14 @@ export interface TilePainter {
         map: readonly (readonly number[])[],
         animate: number,
     ): boolean;
+    /** 绘制脱离地图的图块（图块移动动画，`px / py` 为像素坐标）；不给时退回色块 */
+    drawDetached?(
+        ctx: CanvasRenderingContext2D,
+        element: MapElement,
+        px: number,
+        py: number,
+        animate: number,
+    ): boolean;
 }
 
 /** 数字 -> 图块；10000 以上的编号按旧约定自动视为 tileset（X+编号） */
@@ -77,6 +86,8 @@ export function drawScene(
     drawHero = true,
     /** 运行时图块（含 `disable`）；不给时按静态楼层数据画 */
     blocks?: readonly Block[],
+    /** 正在移动的图块（旧 `core.moveBlock`），画在地图之上、勇士之下 */
+    moving?: readonly MovingBlock[],
 ): void {
     const rows = floor.map;
     const height = rows.length;
@@ -126,6 +137,10 @@ export function drawScene(
         }
     }
 
+    if (moving && moving.length > 0 && materials) {
+        drawMovingBlocks(ctx, moving, materials, animate);
+    }
+
     if (!drawHero) return;
     ctx.fillStyle = '#ffd700';
     ctx.beginPath();
@@ -148,6 +163,28 @@ function blockGrid(
         row[block.x] = block;
     }
     return grid;
+}
+
+/** 绘制正在移动的图块（旧脱离画布），按像素位置与透明度画在最上层 */
+function drawMovingBlocks(
+    ctx: CanvasRenderingContext2D,
+    moving: readonly MovingBlock[],
+    materials: TilePainter,
+    animate: number,
+): void {
+    for (const move of moving) {
+        const alpha = Math.max(0, Math.min(1, move.opacity));
+        if (alpha <= 0) continue;
+        if (alpha < 1) ctx.globalAlpha = alpha;
+        const drawn = materials.drawDetached
+            ? materials.drawDetached(ctx, move.element, move.px, move.py, animate)
+            : materials.drawElement(ctx, move.element, move.px / TILE, move.py / TILE, animate);
+        if (!drawn) {
+            ctx.fillStyle = colorOf(`${move.element.cls}/${move.element.id}`);
+            ctx.fillRect(move.px, move.py, TILE, TILE);
+        }
+        ctx.globalAlpha = 1;
+    }
 }
 
 /**

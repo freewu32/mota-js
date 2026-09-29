@@ -184,6 +184,8 @@ function render(): void {
         animate,
         heroImage == null,
         runtime.getBlocks(runtime.state.floorId),
+        // 图块移动动画（旧 `core.moveBlock`）：样板 1F 的小偷就是靠它跑掉的
+        runtime.movingBlocks.list,
     );
     if (heroImage) {
         // 跟随者画在勇士之前，保证勇士在最上层（旧版按 y 排序，这里简化）
@@ -637,8 +639,8 @@ function loop(now: number): void {
     const fxAnimating = fx.update(now);
     if (fxAnimating) render();
     fx.draw();
-    // 自动事件（旧 `core.checkAutoEvents`）
-    runtime.update();
+    // 自动事件（旧 `core.checkAutoEvents`）与图块移动动画
+    if (runtime.update(now)) render();
     renderStatus();
     $dialogBusy.value = dialog.busy;
     requestAnimationFrame(loop);

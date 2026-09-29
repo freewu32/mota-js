@@ -94,6 +94,32 @@ describe('drawScene', () => {
         expect(calls.filter((c) => c === 'fillRect').length).toBe(7);
     });
 
+    test('移动中的图块按像素位置与透明度绘制', () => {
+        const detached: Array<[string, number, number]> = [];
+        const painter: TilePainter = {
+            drawElement: () => true,
+            drawAutotile: () => true,
+            drawDetached: (_ctx, element, px, py) => {
+                detached.push([element.id ?? '', px, py]);
+                return true;
+            },
+        };
+        const moving = [
+            {
+                element: { cls: 'npcs', id: 'thief' },
+                px: 2 * 32 + 10,
+                py: 11 * 32,
+                opacity: 0.5,
+            },
+        ] as unknown as Parameters<typeof drawScene>[8];
+        const { ctx, calls } = recordingCtx();
+        drawScene(ctx, floor, maps, { x: 1, y: 1 }, painter, 0, false, [], moving);
+
+        expect(detached).toEqual([['thief', 2 * 32 + 10, 11 * 32]]);
+        // 半透明：整个场景绘制完会把 alpha 还原回去
+        expect(calls.length).toBeGreaterThan(0);
+    });
+
     test('运行时图块：autotile 的连通性用运行时地图', () => {
         const mapWithHole = [
             [20, 0],
@@ -180,16 +206,27 @@ describe('drawHeroSprite', () => {
             down: { loc: 0, stop: 0, leftFoot: 1, rightFoot: 3 },
             left: { loc: 1, stop: 0, leftFoot: 1, rightFoot: 3 },
         };
-        expect(drawHeroSprite(ctx, {} as CanvasImageSource, icons, { x: 0, y: 0, direction: 'down' })).toBe(true);
+        expect(
+            drawHeroSprite(ctx, {} as CanvasImageSource, icons, { x: 0, y: 0, direction: 'down' }),
+        ).toBe(true);
         expect(calls[0]).toEqual([{}, 0, 0, 32, 48, 0, -16, 32, 48]);
 
         // 走路：帧 1 → leftFoot 列
         calls.length = 0;
-        drawHeroSprite(ctx, {} as CanvasImageSource, icons, { x: 1, y: 2, direction: 'left' }, 1, true);
+        drawHeroSprite(
+            ctx,
+            {} as CanvasImageSource,
+            icons,
+            { x: 1, y: 2, direction: 'left' },
+            1,
+            true,
+        );
         expect(calls[0]).toEqual([{}, 1 * 32, 1 * 48, 32, 48, 1 * 32, 2 * 32 + 32 - 48, 32, 48]);
 
         // 没有该朝向 → 不绘制
-        expect(drawHeroSprite(ctx, {} as CanvasImageSource, icons, { x: 0, y: 0, direction: 'up' })).toBe(false);
+        expect(
+            drawHeroSprite(ctx, {} as CanvasImageSource, icons, { x: 0, y: 0, direction: 'up' }),
+        ).toBe(false);
         expect(drawHeroSprite(ctx, {} as CanvasImageSource, undefined, { x: 0, y: 0 })).toBe(false);
     });
 });

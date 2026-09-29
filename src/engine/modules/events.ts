@@ -99,6 +99,18 @@ export interface EventsHost extends ControlContext {
     actions?: Record<string, ActionHandler>;
     /** 覆盖图块设置（默认直接修改 block 缓存） */
     setBlock?: (floorId: string, x: number, y: number, numberOrId: number | string) => void;
+    /**
+     * 移动图块动画（旧 `core.moveBlock`）：起点没有图块时返回 false。
+     * `done` 在动画结束时调用；非 `async` 的 `move` 动作据此继续事件流。
+     */
+    moveBlock?: (
+        x: number,
+        y: number,
+        steps: unknown,
+        time: number,
+        keep: boolean,
+        done?: () => void,
+    ) => boolean;
     /** 覆盖楼层切换（默认直接改 control 上下文） */
     changeFloor?: (
         floorId: string | null,
@@ -176,7 +188,6 @@ const MAX_SYNC_ROUNDS = 2000;
 
 /** 已知由 UI / 音频层处理的视觉类动作，未实现时静默交给 presenter.effect */
 const VISUAL_ACTIONS = new Set([
-    'move',
     'moveAction',
     'moveHero',
     'jump',
@@ -286,6 +297,7 @@ export class MotaEvents {
             hide: this.actionHide,
             show: this.actionShow,
             removeBlock: this.actionRemoveBlock,
+            move: this.actionMove,
             jumpHero: this.actionJumpHero,
             changeFloor: this.actionChangeFloor,
             changePos: this.actionChangePos,
@@ -926,7 +938,12 @@ export class MotaEvents {
         return null;
     }
 
-    private setBlockAt(floorId: string, x: number, y: number, raw: unknown): void {
+    /**
+     * 在某格放置图块（旧 `core.setBlock`）：已有图块就换掉并取消隐藏，否则新建。
+     *
+     * 公开给运行时：[图块移动](move-block.ts) 结束时要用它把图块落在终点。
+     */
+    setBlockAt(floorId: string, x: number, y: number, raw: unknown): void {
         if (this.host.setBlock) {
             this.host.setBlock(floorId, x, y, raw as number | string);
             return;
@@ -954,6 +971,35 @@ export class MotaEvents {
         } else {
             blocks.push({ x, y, id: number, event });
         }
+    }
+
+    /**
+     * 移动图块（旧 `_action_move` → `core.moveBlock`）。
+     *
+     * 样板 1F 的小偷就是靠它跑掉的：`{ type: 'move', steps: ['right:2', 'down:1'] }`。
+     * `async` 为真时不阻塞事件流，否则等动画结束再执行下一个动作。
+     */
+    private actionMove(
+        data: ScriptActionObject,
+        x: number | null,
+        y: number | null,
+        prefix: string,
+    ): void | 'pause' {
+        const [bx, by] = this.resolveLoc(data.loc, x, y, prefix);
+        const move = this.host.moveBlock;
+        if (!move) {
+            // 没有宿主（如纯引擎场景）时退回呈现层，至少不会丢掉这个动作
+            this.host.presenter.effect?.('move', data);
+            return;
+        }
+        const time = Number(data.time) || 0;
+        const keep = truthy(data.keep);
+        if (truthy(data.async)) {
+            move(bx, by, data.steps, time, keep);
+            return;
+        }
+        move(bx, by, data.steps, time, keep, () => this.resume());
+        return 'pause';
     }
 
     private actionSetBlock(
